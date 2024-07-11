@@ -132,8 +132,6 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
         scenegraph_type = scenegraph_type + "-" + str(winsize)
     elif scenegraph_type == "oneref":
         scenegraph_type = scenegraph_type + "-" + str(refid)
-    elif scenegraph_type == "matrix":
-        scenegraph_type = scenegraph_type + "-" + str(winsize)
 
     pairs = make_pairs(imgs, scene_graph=scenegraph_type, prefilter=None, symmetrize=True)
     if optim_level == 'coarse':
@@ -160,11 +158,6 @@ def set_scenegraph_options(inputfiles, winsize, refid, scenegraph_type):
                                 minimum=1, maximum=max_winsize, step=1, visible=False)
         refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
                               maximum=num_files - 1, step=1, visible=True)
-    elif scenegraph_type == "matrix":
-        winsize = gradio.Slider(label="Scene Graph: long period", value=6,
-                                minimum=2, maximum=num_files, step=1, visible=True)
-        refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
-                              maximum=num_files - 1, step=1, visible=False)
     else:
         winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
                                 minimum=1, maximum=max_winsize, step=1, visible=False)
@@ -196,7 +189,7 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
                                               value='refine', label="OptLevel",
                                               info="Optimization level")
 
-                scenegraph_type = gradio.Dropdown(["complete", "swin", "oneref", 'matrix'],
+                scenegraph_type = gradio.Dropdown(["complete", "swin", "oneref"],
                                                   value='complete', label="Scenegraph",
                                                   info="Define how to make pairs",
                                                   interactive=True)
