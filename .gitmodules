@@ -1,0 +1,4 @@
+[submodule "dust3r"]
+	path = dust3r
+	url = https://github.com/naver/dust3r
+	branch = cvpr

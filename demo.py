@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+# Copyright (C) 2024-present Naver Corporation. All rights reserved.
+# Licensed under CC BY-NC-SA 4.0 (non-commercial use only).
+#
+# --------------------------------------------------------
+# gradio demo
+# --------------------------------------------------------
+import math
+import gradio
+import os
+import torch
+import numpy as np
+import tempfile
+import functools
+import trimesh
+import copy
+from scipy.spatial.transform import Rotation
+
+from mast3r.cloud_opt.sparse_ga import sparse_global_alignment
+from mast3r.cloud_opt.tsdf_optimizer import TSDFPostProcess
+
+from mast3r.model import AsymmetricMASt3R
+from mast3r.utils.misc import hash_md5
+import mast3r.utils.path_to_dust3r  # noqa
+from dust3r.image_pairs import make_pairs
+from dust3r.utils.image import load_images
+from dust3r.utils.device import to_numpy
+from dust3r.viz import add_scene_cam, CAM_COLORS, OPENGL, pts3d_to_trimesh, cat_meshes
+from dust3r.demo import get_args_parser as dust3r_get_args_parser
+
+import matplotlib.pyplot as pl
+pl.ion()
+
+torch.backends.cuda.matmul.allow_tf32 = True  # for gpu >= Ampere and pytorch >= 1.12
+batch_size = 1
+
+
+def get_args_parser():
+    parser = dust3r_get_args_parser()
+    parser.add_argument('--share', action='store_true')
+
+    actions = parser._actions
+    for action in actions:
+        if action.dest == 'model_name':
+            action.choices = ["MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric"]
+    # change defaults
+    parser.prog = 'mast3r demo'
+    return parser
+
+
+def _convert_scene_output_to_glb(outdir, imgs, pts3d, mask, focals, cams2world, cam_size=0.05,
+                                 cam_color=None, as_pointcloud=False,
+                                 transparent_cams=False, silent=False):
+    assert len(pts3d) == len(mask) <= len(imgs) <= len(cams2world) == len(focals)
+    pts3d = to_numpy(pts3d)
+    imgs = to_numpy(imgs)
+    focals = to_numpy(focals)
+    cams2world = to_numpy(cams2world)
+
+    scene = trimesh.Scene()
+
+    # full pointcloud
+    if as_pointcloud:
+        pts = np.concatenate([p[m.ravel()] for p, m in zip(pts3d, mask)])
+        col = np.concatenate([p[m] for p, m in zip(imgs, mask)])
+        pct = trimesh.PointCloud(pts.reshape(-1, 3), colors=col.reshape(-1, 3))
+        scene.add_geometry(pct)
+    else:
+        meshes = []
+        for i in range(len(imgs)):
+            meshes.append(pts3d_to_trimesh(imgs[i], pts3d[i].reshape(imgs[i].shape), mask[i]))
+        mesh = trimesh.Trimesh(**cat_meshes(meshes))
+        scene.add_geometry(mesh)
+
+    # add each camera
+    for i, pose_c2w in enumerate(cams2world):
+        if isinstance(cam_color, list):
+            camera_edge_color = cam_color[i]
+        else:
+            camera_edge_color = cam_color or CAM_COLORS[i % len(CAM_COLORS)]
+        add_scene_cam(scene, pose_c2w, camera_edge_color,
+                      None if transparent_cams else imgs[i], focals[i],
+                      imsize=imgs[i].shape[1::-1], screen_width=cam_size)
+
+    rot = np.eye(4)
+    rot[:3, :3] = Rotation.from_euler('y', np.deg2rad(180)).as_matrix()
+    scene.apply_transform(np.linalg.inv(cams2world[0] @ OPENGL @ rot))
+    outfile = os.path.join(outdir, 'scene.glb')
+    if not silent:
+        print('(exporting 3D scene to', outfile, ')')
+    scene.export(file_obj=outfile)
+    return outfile
+
+
+def get_3D_model_from_scene(outdir, silent, scene, min_conf_thr=2, as_pointcloud=False, mask_sky=False,
+                            clean_depth=False, transparent_cams=False, cam_size=0.05, TSDF_thresh=0):
+    """
+    extract 3D_model (glb file) from a reconstructed scene
+    """
+    if scene is None:
+        return None
+
+    # get optimized values from scene
+    rgbimg = scene.imgs
+    focals = scene.get_focals().cpu()
+    cams2world = scene.get_im_poses().cpu()
+
+    # 3D pointcloud from depthmap, poses and intrinsics
+    if TSDF_thresh > 0:
+        tsdf = TSDFPostProcess(scene, TSDF_thresh=TSDF_thresh)
+        pts3d, _, confs = to_numpy(tsdf.get_dense_pts3d(clean_depth=clean_depth))
+    else:
+        pts3d, _, confs = to_numpy(scene.get_dense_pts3d(clean_depth=clean_depth))
+    msk = to_numpy([c > min_conf_thr for c in confs])
+    return _convert_scene_output_to_glb(outdir, rgbimg, pts3d, msk, focals, cams2world, as_pointcloud=as_pointcloud,
+                                        transparent_cams=transparent_cams, cam_size=cam_size, silent=silent)
+
+
+def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist, optim_level, lr1, niter1, lr2, niter2, min_conf_thr,
+                            as_pointcloud, mask_sky, clean_depth, transparent_cams, cam_size,
+                            scenegraph_type, winsize, refid, TSDF_thresh, **kw):
+    """
+    from a list of images, run mast3r inference, sparse global aligner.
+    then run get_3D_model_from_scene
+    """
+    imgs = load_images(filelist, size=image_size, verbose=not silent)
+    if len(imgs) == 1:
+        imgs = [imgs[0], copy.deepcopy(imgs[0])]
+        imgs[1]['idx'] = 1
+        filelist = [filelist[0], filelist[0] + '_2']
+    if scenegraph_type == "swin":
+        scenegraph_type = scenegraph_type + "-" + str(winsize)
+    elif scenegraph_type == "oneref":
+        scenegraph_type = scenegraph_type + "-" + str(refid)
+    elif scenegraph_type == "matrix":
+        scenegraph_type = scenegraph_type + "-" + str(winsize)
+
+    pairs = make_pairs(imgs, scene_graph=scenegraph_type, prefilter=None, symmetrize=True)
+    if optim_level == 'coarse':
+        niter2 = 0
+    # Sparse GA (forward mast3r -> matching -> 3D optim -> 2D refinement -> triangulation)
+    scene = sparse_global_alignment(filelist, pairs, os.path.join(outdir, 'cache'),
+                                    model, lr1=lr1, niter1=niter1, lr2=lr2, niter2=niter2, device=device,
+                                    opt_depth='depth' in optim_level, **kw)
+    outfile = get_3D_model_from_scene(outdir, silent, scene, min_conf_thr, as_pointcloud, mask_sky,
+                                      clean_depth, transparent_cams, cam_size, TSDF_thresh)
+    return scene, outfile
+
+
+def set_scenegraph_options(inputfiles, winsize, refid, scenegraph_type):
+    num_files = len(inputfiles) if inputfiles is not None else 1
+    max_winsize = max(1, math.ceil((num_files - 1) / 2))
+    if scenegraph_type == "swin":
+        winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
+                                minimum=1, maximum=max_winsize, step=1, visible=True)
+        refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
+                              maximum=num_files - 1, step=1, visible=False)
+    elif scenegraph_type == "oneref":
+        winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
+                                minimum=1, maximum=max_winsize, step=1, visible=False)
+        refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
+                              maximum=num_files - 1, step=1, visible=True)
+    elif scenegraph_type == "matrix":
+        winsize = gradio.Slider(label="Scene Graph: long period", value=6,
+                                minimum=2, maximum=num_files, step=1, visible=True)
+        refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
+                              maximum=num_files - 1, step=1, visible=False)
+    else:
+        winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
+                                minimum=1, maximum=max_winsize, step=1, visible=False)
+        refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
+                              maximum=num_files - 1, step=1, visible=False)
+    return winsize, refid
+
+
+def main_demo(tmpdirname, model, device, image_size, server_name, server_port, silent=False, share=False):
+    if not silent:
+        print('Outputing stuff in', tmpdirname)
+
+    recon_fun = functools.partial(get_reconstructed_scene, tmpdirname, model, device, silent, image_size)
+    model_from_scene_fun = functools.partial(get_3D_model_from_scene, tmpdirname, silent)
+    with gradio.Blocks(css=""".gradio-container {margin: 0 !important; min-width: 100%};""", title="MASt3R Demo") as demo:
+        # scene state is save so that you can change conf_thr, cam_size... without rerunning the inference
+        scene = gradio.State(None)
+        gradio.HTML('<h2 style="text-align: center;">MASt3R Demo</h2>')
+        with gradio.Column():
+            inputfiles = gradio.File(file_count="multiple")
+            with gradio.Row():
+                lr1 = gradio.Slider(label="Coarse LR", value=0.07, minimum=0.01, maximum=0.2, step=0.01)
+                niter1 = gradio.Number(value=200, precision=0, minimum=0, maximum=10_000,
+                                       label="num_iterations", info="For coarse alignment!")
+                lr2 = gradio.Slider(label="Fine LR", value=0.014, minimum=0.005, maximum=0.05, step=0.001)
+                niter2 = gradio.Number(value=500, precision=0, minimum=0, maximum=100_000,
+                                       label="num_iterations", info="For refinement!")
+                optim_level = gradio.Dropdown(["coarse", "refine", "refine+depth"],
+                                              value='refine', label="OptLevel",
+                                              info="Optimization level")
+
+                scenegraph_type = gradio.Dropdown(["complete", "swin", "oneref", 'matrix'],
+                                                  value='complete', label="Scenegraph",
+                                                  info="Define how to make pairs",
+                                                  interactive=True)
+                winsize = gradio.Slider(label="Scene Graph: Window Size", value=1,
+                                        minimum=1, maximum=1, step=1, visible=False)
+                refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0, maximum=0, step=1, visible=False)
+
+            run_btn = gradio.Button("Run")
+
+            with gradio.Row():
+                # adjust the confidence threshold
+                min_conf_thr = gradio.Slider(label="min_conf_thr", value=1.5, minimum=0.0, maximum=10, step=0.1)
+                # adjust the camera size in the output pointcloud
+                cam_size = gradio.Slider(label="cam_size", value=0.2, minimum=0.001, maximum=1.0, step=0.001)
+                TSDF_thresh = gradio.Slider(label="TSDF Threshold", value=0., minimum=0., maximum=1., step=0.01)
+            with gradio.Row():
+                as_pointcloud = gradio.Checkbox(value=True, label="As pointcloud")
+                # two post process implemented
+                mask_sky = gradio.Checkbox(value=False, label="Mask sky")
+                clean_depth = gradio.Checkbox(value=True, label="Clean-up depthmaps")
+                transparent_cams = gradio.Checkbox(value=False, label="Transparent cameras")
+
+            outmodel = gradio.Model3D()
+
+            # events
+            scenegraph_type.change(set_scenegraph_options,
+                                   inputs=[inputfiles, winsize, refid, scenegraph_type],
+                                   outputs=[winsize, refid])
+            inputfiles.change(set_scenegraph_options,
+                              inputs=[inputfiles, winsize, refid, scenegraph_type],
+                              outputs=[winsize, refid])
+            run_btn.click(fn=recon_fun,
+                          inputs=[inputfiles, optim_level, lr1, niter1, lr2, niter2, min_conf_thr, as_pointcloud,
+                                  mask_sky, clean_depth, transparent_cams, cam_size,
+                                  scenegraph_type, winsize, refid, TSDF_thresh],
+                          outputs=[scene, outmodel])
+            min_conf_thr.release(fn=model_from_scene_fun,
+                                 inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
+                                         clean_depth, transparent_cams, cam_size, TSDF_thresh],
+                                 outputs=outmodel)
+            cam_size.change(fn=model_from_scene_fun,
+                            inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
+                                    clean_depth, transparent_cams, cam_size, TSDF_thresh],
+                            outputs=outmodel)
+            TSDF_thresh.change(fn=model_from_scene_fun,
+                               inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
+                                       clean_depth, transparent_cams, cam_size, TSDF_thresh],
+                               outputs=outmodel)
+            as_pointcloud.change(fn=model_from_scene_fun,
+                                 inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
+                                         clean_depth, transparent_cams, cam_size, TSDF_thresh],
+                                 outputs=outmodel)
+            mask_sky.change(fn=model_from_scene_fun,
+                            inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
+                                    clean_depth, transparent_cams, cam_size, TSDF_thresh],
+                            outputs=outmodel)
+            clean_depth.change(fn=model_from_scene_fun,
+                               inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
+                                       clean_depth, transparent_cams, cam_size, TSDF_thresh],
+                               outputs=outmodel)
+            transparent_cams.change(model_from_scene_fun,
+                                    inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
+                                            clean_depth, transparent_cams, cam_size, TSDF_thresh],
+                                    outputs=outmodel)
+    demo.launch(share=False, server_name=server_name, server_port=server_port)
+
+
+if __name__ == '__main__':
+    parser = get_args_parser()
+    args = parser.parse_args()
+
+    if args.server_name is not None:
+        server_name = args.server_name
+    else:
+        server_name = '0.0.0.0' if args.local_network else '127.0.0.1'
+
+    if args.weights is not None:
+        weights_path = args.weights
+    else:
+        weights_path = "naver/" + args.model_name
+
+    model = AsymmetricMASt3R.from_pretrained(weights_path).to(args.device)
+    chkpt_tag = hash_md5(weights_path)
+
+    # mast3r will write the 3D model inside tmpdirname/chkpt_tag
+    if args.tmp_dir is not None:
+        tmpdirname = args.tmp_dir
+        cache_path = os.path.join(tmpdirname, chkpt_tag)
+        os.makedirs(cache_path, exist_ok=True)
+        main_demo(cache_path, model, args.device, args.image_size, server_name, args.server_port, silent=args.silent,
+                  share=args.share)
+    else:
+        with tempfile.TemporaryDirectory(suffix='_mast3r_gradio_demo') as tmpdirname:
+            cache_path = os.path.join(tmpdirname, chkpt_tag)
+            os.makedirs(cache_path, exist_ok=True)
+            main_demo(tmpdirname, model, args.device, args.image_size,
+                      server_name, args.server_port, silent=args.silent,
+                      share=args.share)
