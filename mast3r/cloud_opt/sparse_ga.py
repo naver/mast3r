@@ -115,7 +115,7 @@ def convert_dust3r_pairs_naming(imgs, pairs_in):
 
 
 def sparse_global_alignment(imgs, pairs_in, cache_path, model, subsample=8, desc_conf='desc_conf',
-                            device='cuda', dtype=torch.float32, **kw):
+                            device='cuda', dtype=torch.float32, shared_intrinsics=False, **kw):
     """ Sparse alignment with MASt3R
         imgs: list of image paths
         cache_path: path where to dump temporary files (str)
@@ -148,8 +148,9 @@ def sparse_global_alignment(imgs, pairs_in, cache_path, model, subsample=8, desc
         condense_data(imgs, tmp_pairs, canonical_views, dtype)
 
     imgs, res_coarse, res_fine = sparse_scene_optimizer(
-        imgs, subsample, imsizes, pps, base_focals, core_depth, anchors, corres, corres2d, preds_21, canonical_paths,
-        mst, cache_path=cache_path, device=device, dtype=dtype, **kw)
+        imgs, subsample, imsizes, pps, base_focals, core_depth, anchors, corres, corres2d, preds_21, canonical_paths, mst,
+        shared_intrinsics=shared_intrinsics, cache_path=cache_path, device=device, dtype=dtype, **kw)
+
     return SparseGA(imgs, pairs_in, res_fine or res_coarse, anchors, canonical_paths)
 
 
@@ -161,8 +162,9 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
                            opt_pp=True, opt_depth=True,
                            schedule=cosine_schedule, depth_mode='add', exp_depth=False,
                            lora_depth=False,  # dict(k=96, gamma=15, min_norm=.5),
+                           shared_intrinsics=False,
                            init={}, device='cuda', dtype=torch.float32,
-                           matching_conf_thr=4., loss_dust3r_w=0.01,
+                           matching_conf_thr=5., loss_dust3r_w=0.01,
                            verbose=True, dbg=()):
 
     # extrinsic parameters
@@ -206,11 +208,23 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
             assert False, 'inverse kinematic chain not yet implemented'
 
     # intrinsics parameters
-    pps = [nn.Parameter(pp.to(dtype)) for pp in pps]
+    if shared_intrinsics:
+        # Optimize a single set of intrinsics for all cameras. Use averages as init.
+        confs = torch.stack([torch.load(pth)[0][2].mean() for pth in canonical_paths]).to(pps)
+        weighting = confs / confs.sum()
+        pp = nn.Parameter((weighting @ pps).to(dtype))
+        pps = [pp for _ in range(len(imgs))]
+        focal_m = weighting @ base_focals
+        log_focal = nn.Parameter(focal_m.view(1).log().to(dtype))
+        log_focals = [log_focal for _ in range(len(imgs))]
+    else:
+        pps = [nn.Parameter(pp.to(dtype)) for pp in pps]
+        log_focals = [nn.Parameter(f.view(1).log().to(dtype)) for f in base_focals]
+
     diags = imsizes.float().norm(dim=1)
     min_focals = 0.25 * diags  # diag = 1.2~1.4*max(W,H) => beta >= 1/(2*1.2*tan(fov/2)) ~= 0.26
     max_focals = 10 * diags
-    log_focals = [nn.Parameter(f.view(1).log().to(dtype)) for f in base_focals]
+
     assert len(mst[1]) == len(pps) - 1
 
     def make_K_cam_depth(log_focals, pps, trans, quats, log_sizes, core_depth):
@@ -268,7 +282,11 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
         return K, (inv(cam2w), cam2w), depthmaps
 
     K = make_K_cam_depth(log_focals, pps, None, None, None, None)
-    print('init focals =', to_numpy(K[:, 0, 0]))
+
+    if shared_intrinsics:
+        print('init focal (shared) = ', to_numpy(K[0, 0, 0]).round(2))
+    else:
+        print('init focals =', to_numpy(K[:, 0, 0]))
 
     # spectral low-rank projection of depthmaps
     if lora_depth:
@@ -298,17 +316,39 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
             idxs = anchors[imgs.index(im2k)][1]
             subsamp_preds_21[imk][im2k] = (subpred[idxs], subconf[idxs])  # anchors subsample
 
+    # Prepare slices and corres for losses
+    dust3r_slices = [s for s in imgs_slices if not is_matching_ok[s.img1, s.img2]]
+    loss3d_slices = [s for s in imgs_slices if is_matching_ok[s.img1, s.img2]]
+    cleaned_corres2d = []
+    for cci, (img1, pix1, confs, confsum, imgs_slices) in enumerate(corres2d):
+        cf_sum = 0
+        pix1_filtered = []
+        confs_filtered = []
+        curstep = 0
+        cleaned_slices = []
+        for img2, slice2 in imgs_slices:
+            if is_matching_ok[img1, img2]:
+                tslice = slice(curstep, curstep + slice2.stop - slice2.start, slice2.step)
+                pix1_filtered.append(pix1[tslice])
+                confs_filtered.append(confs[tslice])
+                cleaned_slices.append((img2, slice2))
+            curstep += slice2.stop - slice2.start
+        if pix1_filtered != []:
+            pix1_filtered = torch.cat(pix1_filtered)
+            confs_filtered = torch.cat(confs_filtered)
+            cf_sum = confs_filtered.sum()
+        cleaned_corres2d.append((img1, pix1_filtered, confs_filtered, cf_sum, cleaned_slices))
+
     def loss_dust3r(cam2w, pts3d, pix_loss):
         # In the case no correspondence could be established, fallback to DUSt3R GA regression loss formulation (sparsified)
         loss = 0.
         cf_sum = 0.
-        for s in imgs_slices:
-            if not is_matching_ok[s.img1, s.img2]:
-                # fallback to dust3r regression
-                tgt_pts, tgt_confs = subsamp_preds_21[imgs[s.img2]][imgs[s.img1]]
-                tgt_pts = geotrf(cam2w[s.img2], tgt_pts)
-                cf_sum += tgt_confs.sum()
-                loss += tgt_confs @ pix_loss(pts3d[s.img1], tgt_pts)
+        for s in dust3r_slices:
+            # fallback to dust3r regression
+            tgt_pts, tgt_confs = subsamp_preds_21[imgs[s.img2]][imgs[s.img1]]
+            tgt_pts = geotrf(cam2w[s.img2], tgt_pts)
+            cf_sum += tgt_confs.sum()
+            loss += tgt_confs @ pix_loss(pts3d[s.img1], tgt_pts)
         return loss / cf_sum if cf_sum != 0. else 0.
 
     def loss_3d(K, w2cam, pts3d, pix_loss):
@@ -318,17 +358,16 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
             pts3d_1 = []
             pts3d_2 = []
             confs = []
-            for s in imgs_slices:
+            for s in loss3d_slices:
                 if init[imgs[s.img1]].get('freeze') and init[imgs[s.img2]].get('freeze'):
                     continue
-                if is_matching_ok[s.img1, s.img2]:
-                    pts3d_1.append(pts3d[s.img1][s.slice1])
-                    pts3d_2.append(pts3d[s.img2][s.slice2])
-                    confs.append(s.confs)
+                pts3d_1.append(pts3d[s.img1][s.slice1])
+                pts3d_2.append(pts3d[s.img2][s.slice2])
+                confs.append(s.confs)
         else:
-            pts3d_1 = [pts3d[s.img1][s.slice1] for s in imgs_slices if is_matching_ok[s.img1, s.img2]]
-            pts3d_2 = [pts3d[s.img2][s.slice2] for s in imgs_slices if is_matching_ok[s.img1, s.img2]]
-            confs = [s.confs for s in imgs_slices if is_matching_ok[s.img1, s.img2]]
+            pts3d_1 = [pts3d[s.img1][s.slice1] for s in loss3d_slices]
+            pts3d_2 = [pts3d[s.img2][s.slice2] for s in loss3d_slices]
+            confs = [s.confs for s in loss3d_slices]
 
         if pts3d_1 != []:
             confs = torch.cat(confs)
@@ -347,25 +386,15 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
         # For each 3D point, we have 2 reproj errors
         proj_matrix = K @ w2cam[:, :3]
         loss = npix = 0
-        for img1, pix1, confs, cf_sum, imgs_slices in corres2d:
+        for img1, pix1_filtered, confs_filtered, cf_sum, cleaned_slices in cleaned_corres2d:
             if init[imgs[img1]].get('freeze', 0) >= 1:
                 continue  # no need
-            pts3d_in_img1 = [pts3d[img2][slice2] for img2, slice2 in imgs_slices if is_matching_ok[img1, img2]]
-            pix1_filtered = []
-            confs_filtered = []
-            curstep = 0
-            for img2, slice2 in imgs_slices:
-                if is_matching_ok[img1, img2]:
-                    tslice = slice(curstep, curstep + slice2.stop - slice2.start, slice2.step)
-                    pix1_filtered.append(pix1[tslice])
-                    confs_filtered.append(confs[tslice])
-                curstep += slice2.stop - slice2.start
+            pts3d_in_img1 = [pts3d[img2][slice2] for img2, slice2 in cleaned_slices]
             if pts3d_in_img1 != []:
                 pts3d_in_img1 = torch.cat(pts3d_in_img1)
-                pix1_filtered = torch.cat(pix1_filtered)
-                confs_filtered = torch.cat(confs_filtered)
                 loss += confs_filtered @ pix_loss(pix1_filtered, reproj2d(proj_matrix[img1], pts3d_in_img1))
                 npix += confs_filtered.sum()
+
         return loss / npix if npix != 0 else 0.
 
     def optimize_loop(loss_func, lr_base, niter, pix_loss, lr_end=0):
@@ -429,6 +458,12 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
 
         # refinement with 2d reproj
         res_fine = optimize_loop(loss_2d, lr_base=lr2, niter=niter2, pix_loss=loss2)
+
+    K = make_K_cam_depth(log_focals, pps, None, None, None, None)
+    if shared_intrinsics:
+        print('Final focal (shared) = ', to_numpy(K[0, 0, 0]).round(2))
+    else:
+        print('Final focals =', to_numpy(K[:, 0, 0]))
 
     return imgs, res_coarse, res_fine
 

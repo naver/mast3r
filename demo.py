@@ -118,7 +118,7 @@ def get_3D_model_from_scene(outdir, silent, scene, min_conf_thr=2, as_pointcloud
 
 def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist, optim_level, lr1, niter1, lr2, niter2, min_conf_thr,
                             as_pointcloud, mask_sky, clean_depth, transparent_cams, cam_size,
-                            scenegraph_type, winsize, refid, TSDF_thresh, **kw):
+                            scenegraph_type, winsize, win_cyclic, refid, TSDF_thresh, shared_intrinsics, **kw):
     """
     from a list of images, run mast3r inference, sparse global aligner.
     then run get_3D_model_from_scene
@@ -128,42 +128,51 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
         imgs = [imgs[0], copy.deepcopy(imgs[0])]
         imgs[1]['idx'] = 1
         filelist = [filelist[0], filelist[0] + '_2']
-    if scenegraph_type == "swin":
-        scenegraph_type = scenegraph_type + "-" + str(winsize)
-    elif scenegraph_type == "oneref":
-        scenegraph_type = scenegraph_type + "-" + str(refid)
 
-    pairs = make_pairs(imgs, scene_graph=scenegraph_type, prefilter=None, symmetrize=True)
+    scene_graph_params = [scenegraph_type]
+    if scenegraph_type in ["swin", "logwin"]:
+        scene_graph_params.append(str(winsize))
+    elif scenegraph_type == "oneref":
+        scene_graph_params.append(str(refid))
+    if scenegraph_type in ["swin", "logwin"] and not win_cyclic:
+        scene_graph_params.append('noncyclic')
+    scene_graph = '-'.join(scene_graph_params)
+    pairs = make_pairs(imgs, scene_graph=scene_graph, prefilter=None, symmetrize=True)
     if optim_level == 'coarse':
         niter2 = 0
     # Sparse GA (forward mast3r -> matching -> 3D optim -> 2D refinement -> triangulation)
     scene = sparse_global_alignment(filelist, pairs, os.path.join(outdir, 'cache'),
                                     model, lr1=lr1, niter1=niter1, lr2=lr2, niter2=niter2, device=device,
-                                    opt_depth='depth' in optim_level, **kw)
+                                    opt_depth='depth' in optim_level, shared_intrinsics=shared_intrinsics, **kw)
     outfile = get_3D_model_from_scene(outdir, silent, scene, min_conf_thr, as_pointcloud, mask_sky,
                                       clean_depth, transparent_cams, cam_size, TSDF_thresh)
     return scene, outfile
 
 
-def set_scenegraph_options(inputfiles, winsize, refid, scenegraph_type):
+def set_scenegraph_options(inputfiles, win_cyclic, refid, scenegraph_type):
     num_files = len(inputfiles) if inputfiles is not None else 1
-    max_winsize = max(1, math.ceil((num_files - 1) / 2))
+    show_win_controls = scenegraph_type in ["swin", "logwin"]
+    show_winsize = scenegraph_type in ["swin", "logwin"]
+    show_cyclic = scenegraph_type in ["swin", "logwin"]
+    max_winsize, min_winsize = 1, 1
     if scenegraph_type == "swin":
-        winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
-                                minimum=1, maximum=max_winsize, step=1, visible=True)
-        refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
-                              maximum=num_files - 1, step=1, visible=False)
-    elif scenegraph_type == "oneref":
-        winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
-                                minimum=1, maximum=max_winsize, step=1, visible=False)
-        refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
-                              maximum=num_files - 1, step=1, visible=True)
-    else:
-        winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
-                                minimum=1, maximum=max_winsize, step=1, visible=False)
-        refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
-                              maximum=num_files - 1, step=1, visible=False)
-    return winsize, refid
+        if win_cyclic:
+            max_winsize = max(1, math.ceil((num_files - 1) / 2))
+        else:
+            max_winsize = num_files - 1
+    elif scenegraph_type == "logwin":
+        if win_cyclic:
+            half_size = math.ceil((num_files - 1) / 2)
+            max_winsize = max(1, math.ceil(math.log(half_size, 2)))
+        else:
+            max_winsize = max(1, math.ceil(math.log(num_files, 2)))
+    winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
+                            minimum=min_winsize, maximum=max_winsize, step=1, visible=show_winsize)
+    win_cyclic = gradio.Checkbox(value=win_cyclic, label="Cyclic sequence", visible=show_cyclic)
+    win_col = gradio.Column(visible=show_win_controls)
+    refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
+                          maximum=num_files - 1, step=1, visible=scenegraph_type == 'oneref')
+    return win_col, winsize, win_cyclic, refid
 
 
 def main_demo(tmpdirname, model, device, image_size, server_name, server_port, silent=False, share=False):
@@ -180,21 +189,25 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
             inputfiles = gradio.File(file_count="multiple")
             with gradio.Row():
                 lr1 = gradio.Slider(label="Coarse LR", value=0.07, minimum=0.01, maximum=0.2, step=0.01)
-                niter1 = gradio.Number(value=200, precision=0, minimum=0, maximum=10_000,
+                niter1 = gradio.Number(value=500, precision=0, minimum=0, maximum=10_000,
                                        label="num_iterations", info="For coarse alignment!")
                 lr2 = gradio.Slider(label="Fine LR", value=0.014, minimum=0.005, maximum=0.05, step=0.001)
-                niter2 = gradio.Number(value=500, precision=0, minimum=0, maximum=100_000,
+                niter2 = gradio.Number(value=200, precision=0, minimum=0, maximum=100_000,
                                        label="num_iterations", info="For refinement!")
                 optim_level = gradio.Dropdown(["coarse", "refine", "refine+depth"],
                                               value='refine', label="OptLevel",
                                               info="Optimization level")
+                shared_intrinsics = gradio.Checkbox(value=False, label="Shared intrinsics",
+                                                    info="Only optimize one set of intrinsics for all views")
 
-                scenegraph_type = gradio.Dropdown(["complete", "swin", "oneref"],
+                scenegraph_type = gradio.Dropdown(["complete", "swin", "logwin", "oneref"],
                                                   value='complete', label="Scenegraph",
                                                   info="Define how to make pairs",
                                                   interactive=True)
-                winsize = gradio.Slider(label="Scene Graph: Window Size", value=1,
-                                        minimum=1, maximum=1, step=1, visible=False)
+                with gradio.Column(visible=False) as win_col:
+                    winsize = gradio.Slider(label="Scene Graph: Window Size", value=1,
+                                            minimum=1, maximum=1, step=1)
+                    win_cyclic = gradio.Checkbox(value=False, label="Cyclic sequence")
                 refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0, maximum=0, step=1, visible=False)
 
             run_btn = gradio.Button("Run")
@@ -216,15 +229,18 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
 
             # events
             scenegraph_type.change(set_scenegraph_options,
-                                   inputs=[inputfiles, winsize, refid, scenegraph_type],
-                                   outputs=[winsize, refid])
+                                   inputs=[inputfiles, win_cyclic, refid, scenegraph_type],
+                                   outputs=[win_col, winsize, win_cyclic, refid])
             inputfiles.change(set_scenegraph_options,
-                              inputs=[inputfiles, winsize, refid, scenegraph_type],
-                              outputs=[winsize, refid])
+                              inputs=[inputfiles, win_cyclic, refid, scenegraph_type],
+                              outputs=[win_col, winsize, win_cyclic, refid])
+            win_cyclic.change(set_scenegraph_options,
+                              inputs=[inputfiles, win_cyclic, refid, scenegraph_type],
+                              outputs=[win_col, winsize, win_cyclic, refid])
             run_btn.click(fn=recon_fun,
                           inputs=[inputfiles, optim_level, lr1, niter1, lr2, niter2, min_conf_thr, as_pointcloud,
                                   mask_sky, clean_depth, transparent_cams, cam_size,
-                                  scenegraph_type, winsize, refid, TSDF_thresh],
+                                  scenegraph_type, winsize, win_cyclic, refid, TSDF_thresh, shared_intrinsics],
                           outputs=[scene, outmodel])
             min_conf_thr.release(fn=model_from_scene_fun,
                                  inputs=[scene, min_conf_thr, as_pointcloud, mask_sky,
