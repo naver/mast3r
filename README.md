@@ -281,7 +281,7 @@ torchrun --nproc_per_node=8 train.py \
 
 ### Dataset preparation
 
-See [Visloc section in DUSt3R](https://github.com/naver/dust3r/tree/dust3r_visloc#dataset-preparation)
+See [Visloc section in DUSt3R](https://github.com/naver/dust3r/blob/main/dust3r_visloc/README.md#dataset-preparation)
 
 ### Example Commands
 
