@@ -116,9 +116,10 @@ def get_3D_model_from_scene(outdir, silent, scene, min_conf_thr=2, as_pointcloud
                                         transparent_cams=transparent_cams, cam_size=cam_size, silent=silent)
 
 
-def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist, optim_level, lr1, niter1, lr2, niter2, min_conf_thr,
-                            as_pointcloud, mask_sky, clean_depth, transparent_cams, cam_size,
-                            scenegraph_type, winsize, win_cyclic, refid, TSDF_thresh, shared_intrinsics, **kw):
+def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist, optim_level, lr1, niter1, lr2, niter2,
+                            min_conf_thr, matching_conf_thr, as_pointcloud, mask_sky, clean_depth, transparent_cams,
+                            cam_size, scenegraph_type, winsize, win_cyclic, refid, TSDF_thresh, shared_intrinsics,
+                            **kw):
     """
     from a list of images, run mast3r inference, sparse global aligner.
     then run get_3D_model_from_scene
@@ -143,7 +144,8 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
     # Sparse GA (forward mast3r -> matching -> 3D optim -> 2D refinement -> triangulation)
     scene = sparse_global_alignment(filelist, pairs, os.path.join(outdir, 'cache'),
                                     model, lr1=lr1, niter1=niter1, lr2=lr2, niter2=niter2, device=device,
-                                    opt_depth='depth' in optim_level, shared_intrinsics=shared_intrinsics, **kw)
+                                    opt_depth='depth' in optim_level, shared_intrinsics=shared_intrinsics,
+                                    matching_conf_thr=matching_conf_thr, **kw)
     outfile = get_3D_model_from_scene(outdir, silent, scene, min_conf_thr, as_pointcloud, mask_sky,
                                       clean_depth, transparent_cams, cam_size, TSDF_thresh)
     return scene, outfile
@@ -188,27 +190,33 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
         with gradio.Column():
             inputfiles = gradio.File(file_count="multiple")
             with gradio.Row():
-                lr1 = gradio.Slider(label="Coarse LR", value=0.07, minimum=0.01, maximum=0.2, step=0.01)
-                niter1 = gradio.Number(value=500, precision=0, minimum=0, maximum=10_000,
-                                       label="num_iterations", info="For coarse alignment!")
-                lr2 = gradio.Slider(label="Fine LR", value=0.014, minimum=0.005, maximum=0.05, step=0.001)
-                niter2 = gradio.Number(value=200, precision=0, minimum=0, maximum=100_000,
-                                       label="num_iterations", info="For refinement!")
-                optim_level = gradio.Dropdown(["coarse", "refine", "refine+depth"],
-                                              value='refine', label="OptLevel",
-                                              info="Optimization level")
-                shared_intrinsics = gradio.Checkbox(value=False, label="Shared intrinsics",
-                                                    info="Only optimize one set of intrinsics for all views")
-
-                scenegraph_type = gradio.Dropdown(["complete", "swin", "logwin", "oneref"],
-                                                  value='complete', label="Scenegraph",
-                                                  info="Define how to make pairs",
-                                                  interactive=True)
-                with gradio.Column(visible=False) as win_col:
-                    winsize = gradio.Slider(label="Scene Graph: Window Size", value=1,
-                                            minimum=1, maximum=1, step=1)
-                    win_cyclic = gradio.Checkbox(value=False, label="Cyclic sequence")
-                refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0, maximum=0, step=1, visible=False)
+                with gradio.Column():
+                    with gradio.Row():
+                        lr1 = gradio.Slider(label="Coarse LR", value=0.07, minimum=0.01, maximum=0.2, step=0.01)
+                        niter1 = gradio.Number(value=500, precision=0, minimum=0, maximum=10_000,
+                                               label="num_iterations", info="For coarse alignment!")
+                        lr2 = gradio.Slider(label="Fine LR", value=0.014, minimum=0.005, maximum=0.05, step=0.001)
+                        niter2 = gradio.Number(value=200, precision=0, minimum=0, maximum=100_000,
+                                               label="num_iterations", info="For refinement!")
+                        optim_level = gradio.Dropdown(["coarse", "refine", "refine+depth"],
+                                                      value='refine', label="OptLevel",
+                                                      info="Optimization level")
+                    with gradio.Row():
+                        matching_conf_thr = gradio.Slider(label="Matching Confidence Thr", value=5.,
+                                                          minimum=0., maximum=30., step=0.1,
+                                                          info="Before Fallback to Regr3D!")
+                        shared_intrinsics = gradio.Checkbox(value=False, label="Shared intrinsics",
+                                                            info="Only optimize one set of intrinsics for all views")
+                        scenegraph_type = gradio.Dropdown(["complete", "swin", "logwin", "oneref"],
+                                                          value='complete', label="Scenegraph",
+                                                          info="Define how to make pairs",
+                                                          interactive=True)
+                        with gradio.Column(visible=False) as win_col:
+                            winsize = gradio.Slider(label="Scene Graph: Window Size", value=1,
+                                                    minimum=1, maximum=1, step=1)
+                            win_cyclic = gradio.Checkbox(value=False, label="Cyclic sequence")
+                        refid = gradio.Slider(label="Scene Graph: Id", value=0,
+                                              minimum=0, maximum=0, step=1, visible=False)
 
             run_btn = gradio.Button("Run")
 
@@ -238,8 +246,8 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
                               inputs=[inputfiles, win_cyclic, refid, scenegraph_type],
                               outputs=[win_col, winsize, win_cyclic, refid])
             run_btn.click(fn=recon_fun,
-                          inputs=[inputfiles, optim_level, lr1, niter1, lr2, niter2, min_conf_thr, as_pointcloud,
-                                  mask_sky, clean_depth, transparent_cams, cam_size,
+                          inputs=[inputfiles, optim_level, lr1, niter1, lr2, niter2, min_conf_thr, matching_conf_thr,
+                                  as_pointcloud, mask_sky, clean_depth, transparent_cams, cam_size,
                                   scenegraph_type, winsize, win_cyclic, refid, TSDF_thresh, shared_intrinsics],
                           outputs=[scene, outmodel])
             min_conf_thr.release(fn=model_from_scene_fun,

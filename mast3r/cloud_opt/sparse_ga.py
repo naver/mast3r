@@ -144,8 +144,8 @@ def sparse_global_alignment(imgs, pairs_in, cache_path, model, subsample=8, desc
     # tmp_pairs = {(a,b):v for (a,b),v in tmp_pairs.items() if {(a,b),(b,a)} & min_spanning_tree}
 
     # smartly combine all usefull data
-    imsizes, pps, base_focals, core_depth, anchors, corres, corres2d = \
-        condense_data(imgs, tmp_pairs, canonical_views, dtype)
+    imsizes, pps, base_focals, core_depth, anchors, corres, corres2d, preds_21 = \
+        condense_data(imgs, tmp_pairs, canonical_views, preds_21, dtype)
 
     imgs, res_coarse, res_fine = sparse_scene_optimizer(
         imgs, subsample, imsizes, pps, base_focals, core_depth, anchors, corres, corres2d, preds_21, canonical_paths, mst,
@@ -345,7 +345,7 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
             if init[imgs[s.img1]].get('freeze') and init[imgs[s.img2]].get('freeze'):
                 continue
             # fallback to dust3r regression
-            tgt_pts, tgt_confs = subsamp_preds_21[imgs[s.img2]][imgs[s.img1]]
+            tgt_pts, tgt_confs = preds_21[imgs[s.img2]][imgs[s.img1]]
             tgt_pts = geotrf(cam2w[s.img2], tgt_pts)
             cf_sum += tgt_confs.sum()
             loss += tgt_confs @ pix_loss(pts3d[s.img1], tgt_pts)
@@ -733,7 +733,7 @@ PairOfSlices = namedtuple(
     'ImgPair', 'img1, slice1, pix1, anchor_idxs1, img2, slice2, pix2, anchor_idxs2, confs, confs_sum')
 
 
-def condense_data(imgs, tmp_paths, canonical_views, dtype=torch.float32):
+def condense_data(imgs, tmp_paths, canonical_views, preds_21, dtype=torch.float32):
     # aggregate all data properly
     set_imgs = set(imgs)
 
@@ -809,7 +809,16 @@ def condense_data(imgs, tmp_paths, canonical_views, dtype=torch.float32):
     imsizes = torch.tensor([(W, H) for H, W in shapes], device=pp.device)  # (W,H)
     principal_points = torch.stack(principal_points)
     focals = torch.cat(focals)
-    return imsizes, principal_points, focals, core_depth, img_anchors, corres, corres2d
+
+    # Subsample preds_21
+    subsamp_preds_21 = {}
+    for imk, imv in preds_21.items():
+        subsamp_preds_21[imk] = {}
+        for im2k, (pred, conf) in preds_21[imk].items():
+            idxs = img_anchors[imgs.index(im2k)][1]
+            subsamp_preds_21[imk][im2k] = (pred[idxs], conf[idxs])  # anchors subsample
+
+    return imsizes, principal_points, focals, core_depth, img_anchors, corres, corres2d, subsamp_preds_21
 
 
 def canonical_view(ptmaps11, confs11, subsample, mode='avg-angle'):
