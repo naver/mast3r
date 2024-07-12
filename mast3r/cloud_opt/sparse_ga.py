@@ -311,10 +311,8 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
     for imk, imv in preds_21.items():
         subsamp_preds_21[imk] = {}
         for im2k, (pred, conf) in preds_21[imk].items():
-            subpred = pred[::subsample, ::subsample].reshape(-1, 3)  # original subsample
-            subconf = conf[::subsample, ::subsample].ravel()       # for both ptmaps and confs
             idxs = anchors[imgs.index(im2k)][1]
-            subsamp_preds_21[imk][im2k] = (subpred[idxs], subconf[idxs])  # anchors subsample
+            subsamp_preds_21[imk][im2k] = (pred[idxs], conf[idxs])  # anchors subsample
 
     # Prepare slices and corres for losses
     dust3r_slices = [s for s in imgs_slices if not is_matching_ok[s.img1, s.img2]]
@@ -344,6 +342,8 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
         loss = 0.
         cf_sum = 0.
         for s in dust3r_slices:
+            if init[imgs[s.img1]].get('freeze') and init[imgs[s.img2]].get('freeze'):
+                continue
             # fallback to dust3r regression
             tgt_pts, tgt_confs = subsamp_preds_21[imgs[s.img2]][imgs[s.img1]]
             tgt_pts = geotrf(cam2w[s.img2], tgt_pts)
@@ -669,7 +669,8 @@ def prepare_canonical_data(imgs, tmp_pairs, subsample, order_imgs=False, min_con
                 pixels[img2] = xy1, confs
                 if img not in preds_21:
                     preds_21[img] = {}
-                preds_21[img][img2] = X2, C2
+                # Subsample preds_21
+                preds_21[img][img2] = X2[::subsample, ::subsample].reshape(-1, 3), C2[::subsample, ::subsample].ravel()
 
             if img == img2:
                 X, C, X2, C2 = torch.load(path2, map_location=device)
@@ -677,7 +678,7 @@ def prepare_canonical_data(imgs, tmp_pairs, subsample, order_imgs=False, min_con
                 pixels[img1] = xy2, confs
                 if img not in preds_21:
                     preds_21[img] = {}
-                preds_21[img][img1] = X2, C2
+                preds_21[img][img1] = X2[::subsample, ::subsample].reshape(-1, 3), C2[::subsample, ::subsample].ravel()
 
             if score is not None:
                 i, j = imgs.index(img1), imgs.index(img2)
