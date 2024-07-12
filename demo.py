@@ -207,7 +207,10 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
                                                           info="Before Fallback to Regr3D!")
                         shared_intrinsics = gradio.Checkbox(value=False, label="Shared intrinsics",
                                                             info="Only optimize one set of intrinsics for all views")
-                        scenegraph_type = gradio.Dropdown(["complete", "swin", "logwin", "oneref"],
+                        scenegraph_type = gradio.Dropdown([("complete: all possible image pairs", "complete"),
+                                                           ("swin: sliding window", "swin"),
+                                                           ("logwin: sliding window with long range", "logwin"),
+                                                           ("oneref: match one image with all", "oneref")],
                                                           value='complete', label="Scenegraph",
                                                           info="Define how to make pairs",
                                                           interactive=True)
