@@ -132,7 +132,9 @@ def fast_reciprocal_NNs(pts1, pts2, subsample_or_initxy1=8, ret_xy=True, pixel_t
     old_xy1 = xy1.copy()
     old_xy2 = xy2.copy()
 
-    if (isinstance(device, str) and device.startswith('cuda')) or (isinstance(device, torch.device) and device.type.startswith('cuda')):
+    if 'dist' in matcher_kw or 'block_size' in matcher_kw \
+            or (isinstance(device, str) and device.startswith('cuda')) \
+            or (isinstance(device, torch.device) and device.type.startswith('cuda')):
         pts1 = pts1.to(device)
         pts2 = pts2.to(device)
         tree1 = cdistMatcher(pts1, device=device)
