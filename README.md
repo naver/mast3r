@@ -252,7 +252,7 @@ torchrun --nproc_per_node=4 train.py \
     --test_criterion "Regr3D_ScaleShiftInv(L21, norm_mode='?avg_dis', gt_scale=True, sky_loss_value=0) + -1.*MatchingLoss(APLoss(nq='torch', fp=torch.float16), negatives_padding=12288)" \
     --pretrained "checkpoints/DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth" \
     --lr 0.0001 --min_lr 1e-06 --warmup_epochs 1 --epochs 10 --batch_size 4 --accum_iter 4 \
-    --save_freq 1 --keep_freq 5 --eval_freq 1 \
+    --save_freq 1 --keep_freq 5 --eval_freq 1 --disable_cudnn_benchmark \
     --output_dir "checkpoints/mast3r_demo"
 
 ```
@@ -272,7 +272,7 @@ torchrun --nproc_per_node=8 train.py \
     --test_criterion "Regr3D(L21, norm_mode='?avg_dis', gt_scale=True, sky_loss_value=0) + -1.*MatchingLoss(APLoss(nq='torch', fp=torch.float16), negatives_padding=12288)" \
     --pretrained "checkpoints/DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth" \
     --lr 0.0001 --min_lr 1e-06 --warmup_epochs 8 --epochs 50 --batch_size 4 --accum_iter 2 \
-    --save_freq 1 --keep_freq 5 --eval_freq 1 --print_freq=10 \
+    --save_freq 1 --keep_freq 5 --eval_freq 1 --print_freq=10 --disable_cudnn_benchmark \
     --output_dir "checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric"
 
 ```
