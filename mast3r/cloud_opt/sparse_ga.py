@@ -306,14 +306,6 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
     for s in imgs_slices:
         is_matching_ok[s.img1, s.img2] = matching_check(s.confs)
 
-    # Subsample preds_21
-    subsamp_preds_21 = {}
-    for imk, imv in preds_21.items():
-        subsamp_preds_21[imk] = {}
-        for im2k, (pred, conf) in preds_21[imk].items():
-            idxs = anchors[imgs.index(im2k)][1]
-            subsamp_preds_21[imk][im2k] = (pred[idxs], conf[idxs])  # anchors subsample
-
     # Prepare slices and corres for losses
     dust3r_slices = [s for s in imgs_slices if not is_matching_ok[s.img1, s.img2]]
     loss3d_slices = [s for s in imgs_slices if is_matching_ok[s.img1, s.img2]]
