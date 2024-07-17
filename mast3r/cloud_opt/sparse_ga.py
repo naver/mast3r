@@ -823,7 +823,8 @@ def canonical_view(ptmaps11, confs11, subsample, mode='avg-angle'):
     canon_depth = ptmaps11[..., 2].unsqueeze(1)
     S = slice(subsample // 2, None, subsample)
     center_depth = canon_depth[:, :, S, S]
-    assert (center_depth > 0).all()
+    center_depth = torch.clip(center_depth, min=torch.finfo(center_depth.dtype).eps)
+
     stacked_depth = F.pixel_unshuffle(canon_depth, subsample)
     stacked_confs = F.pixel_unshuffle(confs11[:, None, :, :, 0], subsample)
 
