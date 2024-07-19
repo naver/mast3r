@@ -36,9 +36,6 @@ class SparseGAState():
         self.outfile_name = outfile_name
         self.should_delete = should_delete
 
-    def __getattr__(self, name):
-        return getattr(self.sparse_ga, name)
-
     def __del__(self):
         if self.cache_dir is not None and os.path.isdir(self.cache_dir):
             shutil.rmtree(self.cache_dir)
@@ -109,18 +106,19 @@ def _convert_scene_output_to_glb(outfile, imgs, pts3d, mask, focals, cams2world,
     return outfile
 
 
-def get_3D_model_from_scene(silent, scene, min_conf_thr=2, as_pointcloud=False, mask_sky=False,
+def get_3D_model_from_scene(silent, scene_state, min_conf_thr=2, as_pointcloud=False, mask_sky=False,
                             clean_depth=False, transparent_cams=False, cam_size=0.05, TSDF_thresh=0):
     """
     extract 3D_model (glb file) from a reconstructed scene
     """
-    if scene is None:
+    if scene_state is None:
         return None
-    outfile = scene.outfile_name
+    outfile = scene_state.outfile_name
     if outfile is None:
         return None
 
     # get optimized values from scene
+    scene = scene_state.sparse_ga
     rgbimg = scene.imgs
     focals = scene.get_focals().cpu()
     cams2world = scene.get_im_poses().cpu()
@@ -177,10 +175,10 @@ def get_reconstructed_scene(outdir, gradio_delete_cache, model, device, silent, 
     else:
         outfile_name = tempfile.mktemp(suffix='_scene.glb', dir=outdir)
 
-    scene = SparseGAState(scene, gradio_delete_cache, cache_dir, outfile_name)
-    outfile = get_3D_model_from_scene(silent, scene, min_conf_thr, as_pointcloud, mask_sky,
+    scene_state = SparseGAState(scene, gradio_delete_cache, cache_dir, outfile_name)
+    outfile = get_3D_model_from_scene(silent, scene_state, min_conf_thr, as_pointcloud, mask_sky,
                                       clean_depth, transparent_cams, cam_size, TSDF_thresh)
-    return scene, outfile
+    return scene_state, outfile
 
 
 def set_scenegraph_options(inputfiles, win_cyclic, refid, scenegraph_type):
