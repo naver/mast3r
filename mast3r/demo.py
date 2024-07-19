@@ -37,6 +37,8 @@ class SparseGAState():
         self.should_delete = should_delete
 
     def __del__(self):
+        if not self.should_delete:
+            return
         if self.cache_dir is not None and os.path.isdir(self.cache_dir):
             shutil.rmtree(self.cache_dir)
         self.cache_dir = None
@@ -160,7 +162,9 @@ def get_reconstructed_scene(outdir, gradio_delete_cache, model, device, silent, 
     if optim_level == 'coarse':
         niter2 = 0
     # Sparse GA (forward mast3r -> matching -> 3D optim -> 2D refinement -> triangulation)
-    if current_scene_state is not None and current_scene_state.cache_dir is not None:
+    if current_scene_state is not None and \
+        not current_scene_state.should_delete and \
+            current_scene_state.cache_dir is not None:
         cache_dir = current_scene_state.cache_dir
     elif gradio_delete_cache:
         cache_dir = tempfile.mkdtemp(suffix='_cache', dir=outdir)
@@ -170,7 +174,9 @@ def get_reconstructed_scene(outdir, gradio_delete_cache, model, device, silent, 
                                     model, lr1=lr1, niter1=niter1, lr2=lr2, niter2=niter2, device=device,
                                     opt_depth='depth' in optim_level, shared_intrinsics=shared_intrinsics,
                                     matching_conf_thr=matching_conf_thr, **kw)
-    if current_scene_state is not None and current_scene_state.outfile_name is not None:
+    if current_scene_state is not None and \
+        not current_scene_state.should_delete and \
+            current_scene_state.outfile_name is not None:
         outfile_name = current_scene_state.outfile_name
     else:
         outfile_name = tempfile.mktemp(suffix='_scene.glb', dir=outdir)
