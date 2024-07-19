@@ -13,6 +13,8 @@ import functools
 import trimesh
 import copy
 from scipy.spatial.transform import Rotation
+import tempfile
+import shutil
 
 from mast3r.cloud_opt.sparse_ga import sparse_global_alignment
 from mast3r.cloud_opt.tsdf_optimizer import TSDFPostProcess
@@ -27,9 +29,30 @@ from dust3r.demo import get_args_parser as dust3r_get_args_parser
 import matplotlib.pyplot as pl
 
 
+class SparseGAState():
+    def __init__(self, sparse_ga, should_delete=False, cache_dir=None, outfile_name=None):
+        self.sparse_ga = sparse_ga
+        self.cache_dir = cache_dir
+        self.outfile_name = outfile_name
+        self.should_delete = should_delete
+
+    def __getattr__(self, name):
+        return getattr(self.sparse_ga, name)
+
+    def __del__(self):
+        if self.cache_dir is not None and os.path.isdir(self.cache_dir):
+            shutil.rmtree(self.cache_dir)
+        self.cache_dir = None
+        if self.outfile_name is not None and os.path.isfile(self.outfile_name):
+            os.remove(self.outfile_name)
+        self.outfile_name = None
+
+
 def get_args_parser():
     parser = dust3r_get_args_parser()
     parser.add_argument('--share', action='store_true')
+    parser.add_argument('--gradio_delete_cache', default=None, type=int,
+                        help='age/frequency at which gradio removes the file. If >0, matching cache is purged')
 
     actions = parser._actions
     for action in actions:
@@ -40,7 +63,7 @@ def get_args_parser():
     return parser
 
 
-def _convert_scene_output_to_glb(outdir, imgs, pts3d, mask, focals, cams2world, cam_size=0.05,
+def _convert_scene_output_to_glb(outfile, imgs, pts3d, mask, focals, cams2world, cam_size=0.05,
                                  cam_color=None, as_pointcloud=False,
                                  transparent_cams=False, silent=False):
     assert len(pts3d) == len(mask) <= len(imgs) <= len(cams2world) == len(focals)
@@ -53,14 +76,17 @@ def _convert_scene_output_to_glb(outdir, imgs, pts3d, mask, focals, cams2world, 
 
     # full pointcloud
     if as_pointcloud:
-        pts = np.concatenate([p[m.ravel()] for p, m in zip(pts3d, mask)])
-        col = np.concatenate([p[m] for p, m in zip(imgs, mask)])
-        pct = trimesh.PointCloud(pts.reshape(-1, 3), colors=col.reshape(-1, 3))
+        pts = np.concatenate([p[m.ravel()] for p, m in zip(pts3d, mask)]).reshape(-1, 3)
+        col = np.concatenate([p[m] for p, m in zip(imgs, mask)]).reshape(-1, 3)
+        valid_msk = np.isfinite(pts.sum(axis=1))
+        pct = trimesh.PointCloud(pts[valid_msk], colors=col[valid_msk])
         scene.add_geometry(pct)
     else:
         meshes = []
         for i in range(len(imgs)):
-            meshes.append(pts3d_to_trimesh(imgs[i], pts3d[i].reshape(imgs[i].shape), mask[i]))
+            pts3d_i = pts3d[i].reshape(imgs[i].shape)
+            msk_i = mask[i] & np.isfinite(pts3d_i.sum(axis=-1))
+            meshes.append(pts3d_to_trimesh(imgs[i], pts3d_i, msk_i))
         mesh = trimesh.Trimesh(**cat_meshes(meshes))
         scene.add_geometry(mesh)
 
@@ -77,19 +103,21 @@ def _convert_scene_output_to_glb(outdir, imgs, pts3d, mask, focals, cams2world, 
     rot = np.eye(4)
     rot[:3, :3] = Rotation.from_euler('y', np.deg2rad(180)).as_matrix()
     scene.apply_transform(np.linalg.inv(cams2world[0] @ OPENGL @ rot))
-    outfile = os.path.join(outdir, 'scene.glb')
     if not silent:
         print('(exporting 3D scene to', outfile, ')')
     scene.export(file_obj=outfile)
     return outfile
 
 
-def get_3D_model_from_scene(outdir, silent, scene, min_conf_thr=2, as_pointcloud=False, mask_sky=False,
+def get_3D_model_from_scene(silent, scene, min_conf_thr=2, as_pointcloud=False, mask_sky=False,
                             clean_depth=False, transparent_cams=False, cam_size=0.05, TSDF_thresh=0):
     """
     extract 3D_model (glb file) from a reconstructed scene
     """
     if scene is None:
+        return None
+    outfile = scene.outfile_name
+    if outfile is None:
         return None
 
     # get optimized values from scene
@@ -104,14 +132,14 @@ def get_3D_model_from_scene(outdir, silent, scene, min_conf_thr=2, as_pointcloud
     else:
         pts3d, _, confs = to_numpy(scene.get_dense_pts3d(clean_depth=clean_depth))
     msk = to_numpy([c > min_conf_thr for c in confs])
-    return _convert_scene_output_to_glb(outdir, rgbimg, pts3d, msk, focals, cams2world, as_pointcloud=as_pointcloud,
+    return _convert_scene_output_to_glb(outfile, rgbimg, pts3d, msk, focals, cams2world, as_pointcloud=as_pointcloud,
                                         transparent_cams=transparent_cams, cam_size=cam_size, silent=silent)
 
 
-def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist, optim_level, lr1, niter1, lr2, niter2,
-                            min_conf_thr, matching_conf_thr, as_pointcloud, mask_sky, clean_depth, transparent_cams,
-                            cam_size, scenegraph_type, winsize, win_cyclic, refid, TSDF_thresh, shared_intrinsics,
-                            **kw):
+def get_reconstructed_scene(outdir, gradio_delete_cache, model, device, silent, image_size, current_scene_state,
+                            filelist, optim_level, lr1, niter1, lr2, niter2, min_conf_thr, matching_conf_thr,
+                            as_pointcloud, mask_sky, clean_depth, transparent_cams, cam_size, scenegraph_type, winsize,
+                            win_cyclic, refid, TSDF_thresh, shared_intrinsics, **kw):
     """
     from a list of images, run mast3r inference, sparse global aligner.
     then run get_3D_model_from_scene
@@ -134,11 +162,23 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
     if optim_level == 'coarse':
         niter2 = 0
     # Sparse GA (forward mast3r -> matching -> 3D optim -> 2D refinement -> triangulation)
-    scene = sparse_global_alignment(filelist, pairs, os.path.join(outdir, 'cache'),
+    if current_scene_state is not None and current_scene_state.cache_dir is not None:
+        cache_dir = current_scene_state.cache_dir
+    elif gradio_delete_cache:
+        cache_dir = tempfile.mkdtemp(suffix='_cache', dir=outdir)
+    else:
+        cache_dir = os.path.join(outdir, 'cache')
+    scene = sparse_global_alignment(filelist, pairs, cache_dir,
                                     model, lr1=lr1, niter1=niter1, lr2=lr2, niter2=niter2, device=device,
                                     opt_depth='depth' in optim_level, shared_intrinsics=shared_intrinsics,
                                     matching_conf_thr=matching_conf_thr, **kw)
-    outfile = get_3D_model_from_scene(outdir, silent, scene, min_conf_thr, as_pointcloud, mask_sky,
+    if current_scene_state is not None and current_scene_state.outfile_name is not None:
+        outfile_name = current_scene_state.outfile_name
+    else:
+        outfile_name = tempfile.mktemp(suffix='_scene.glb', dir=outdir)
+
+    scene = SparseGAState(scene, gradio_delete_cache, cache_dir, outfile_name)
+    outfile = get_3D_model_from_scene(silent, scene, min_conf_thr, as_pointcloud, mask_sky,
                                       clean_depth, transparent_cams, cam_size, TSDF_thresh)
     return scene, outfile
 
@@ -169,13 +209,24 @@ def set_scenegraph_options(inputfiles, win_cyclic, refid, scenegraph_type):
     return win_col, winsize, win_cyclic, refid
 
 
-def main_demo(tmpdirname, model, device, image_size, server_name, server_port, silent=False, share=False):
+def main_demo(tmpdirname, model, device, image_size, server_name, server_port, silent=False,
+              share=False, gradio_delete_cache=False):
     if not silent:
         print('Outputing stuff in', tmpdirname)
 
-    recon_fun = functools.partial(get_reconstructed_scene, tmpdirname, model, device, silent, image_size)
-    model_from_scene_fun = functools.partial(get_3D_model_from_scene, tmpdirname, silent)
-    with gradio.Blocks(css=""".gradio-container {margin: 0 !important; min-width: 100%};""", title="MASt3R Demo") as demo:
+    recon_fun = functools.partial(get_reconstructed_scene, tmpdirname, gradio_delete_cache, model, device,
+                                  silent, image_size)
+    model_from_scene_fun = functools.partial(get_3D_model_from_scene, silent)
+
+    def get_context(delete_cache):
+        css = """.gradio-container {margin: 0 !important; min-width: 100%};"""
+        title = "MASt3R Demo"
+        if delete_cache:
+            return gradio.Blocks(css=css, title=title, delete_cache=(delete_cache, delete_cache))
+        else:
+            return gradio.Blocks(css=css, title="MASt3R Demo")  # for compatibility with older versions
+
+    with get_context(gradio_delete_cache) as demo:
         # scene state is save so that you can change conf_thr, cam_size... without rerunning the inference
         scene = gradio.State(None)
         gradio.HTML('<h2 style="text-align: center;">MASt3R Demo</h2>')
@@ -212,7 +263,6 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
                             win_cyclic = gradio.Checkbox(value=False, label="Cyclic sequence")
                         refid = gradio.Slider(label="Scene Graph: Id", value=0,
                                               minimum=0, maximum=0, step=1, visible=False)
-
             run_btn = gradio.Button("Run")
 
             with gradio.Row():
@@ -241,7 +291,7 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
                               inputs=[inputfiles, win_cyclic, refid, scenegraph_type],
                               outputs=[win_col, winsize, win_cyclic, refid])
             run_btn.click(fn=recon_fun,
-                          inputs=[inputfiles, optim_level, lr1, niter1, lr2, niter2, min_conf_thr, matching_conf_thr,
+                          inputs=[scene, inputfiles, optim_level, lr1, niter1, lr2, niter2, min_conf_thr, matching_conf_thr,
                                   as_pointcloud, mask_sky, clean_depth, transparent_cams, cam_size,
                                   scenegraph_type, winsize, win_cyclic, refid, TSDF_thresh, shared_intrinsics],
                           outputs=[scene, outmodel])
@@ -274,4 +324,3 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
                                             clean_depth, transparent_cams, cam_size, TSDF_thresh],
                                     outputs=outmodel)
     demo.launch(share=share, server_name=server_name, server_port=server_port)
-    

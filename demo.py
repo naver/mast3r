@@ -8,6 +8,7 @@
 import os
 import torch
 import tempfile
+from contextlib import nullcontext
 
 from mast3r.demo import get_args_parser, main_demo
 
@@ -36,17 +37,11 @@ if __name__ == '__main__':
     model = AsymmetricMASt3R.from_pretrained(weights_path).to(args.device)
     chkpt_tag = hash_md5(weights_path)
 
-    # mast3r will write the 3D model inside tmpdirname/chkpt_tag
-    if args.tmp_dir is not None:
-        tmpdirname = args.tmp_dir
+    def get_context(tmp_dir):
+        return tempfile.TemporaryDirectory(suffix='_mast3r_gradio_demo') if tmp_dir is None \
+            else nullcontext(tmp_dir)
+    with get_context(args.tmp_dir) as tmpdirname:
         cache_path = os.path.join(tmpdirname, chkpt_tag)
         os.makedirs(cache_path, exist_ok=True)
         main_demo(cache_path, model, args.device, args.image_size, server_name, args.server_port, silent=args.silent,
-                  share=args.share)
-    else:
-        with tempfile.TemporaryDirectory(suffix='_mast3r_gradio_demo') as tmpdirname:
-            cache_path = os.path.join(tmpdirname, chkpt_tag)
-            os.makedirs(cache_path, exist_ok=True)
-            main_demo(tmpdirname, model, args.device, args.image_size,
-                      server_name, args.server_port, silent=args.silent,
-                      share=args.share)
+                  share=args.share, gradio_delete_cache=args.gradio_delete_cache)
