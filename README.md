@@ -245,7 +245,7 @@ In this section, we present a short demonstration to get started with training M
 
 ### Datasets
 
-See [Datasets section in DUSt3R](https://github.com/naver/dust3r/tree/datasets?tab=readme-ov-file#datasets)
+See [Datasets section in DUSt3R](https://github.com/naver/dust3r?tab=readme-ov-file#datasets)
 
 ### Demo
 
