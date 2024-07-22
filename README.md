@@ -114,7 +114,8 @@ The mapfree dataset license in particular is very restrictive. For more informat
 
 ### Interactive demo
 
-There are two demos available:
+We made one huggingface space running the new sparse global alignment in a simplified demo for small scenes: [naver/MASt3R](https://huggingface.co/spaces/naver/MASt3R)
+There are two demos available to run locally:
 
 ```
 demo.py is the updated demo for MASt3R. It uses our new sparse global alignment method that allows you to reconstruct larger scenes
@@ -129,6 +130,7 @@ python3 demo.py --model_name MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric
 demo_dust3r_ga.py is the same demo as in dust3r (+ compatibility for MASt3R models)
 see https://github.com/naver/dust3r?tab=readme-ov-file#interactive-demo for details
 ```
+
 ### Interactive demo with docker
 
 TODO
