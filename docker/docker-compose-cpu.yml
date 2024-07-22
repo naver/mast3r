@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  mast3r-demo:
+    build:
+      context: ./files
+      dockerfile: cpu.Dockerfile 
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./files/checkpoints:/mast3r/checkpoints
+    environment:
+      - DEVICE=cpu
+      - MODEL=${MODEL:-MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth}
+    cap_add:
+      - IPC_LOCK
+      - SYS_RESOURCE

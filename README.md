@@ -133,7 +133,32 @@ see https://github.com/naver/dust3r?tab=readme-ov-file#interactive-demo for deta
 
 ### Interactive demo with docker
 
-TODO
+To run MASt3R using Docker, including with NVIDIA CUDA support, follow these instructions:
+
+1. **Install Docker**: If not already installed, download and install `docker` and `docker compose` from the [Docker website](https://www.docker.com/get-started).
+
+2. **Install NVIDIA Docker Toolkit**: For GPU support, install the NVIDIA Docker toolkit from the [Nvidia website](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+
+3. **Build the Docker image and run it**: `cd` into the `./docker` directory and run the following commands: 
+
+```bash
+cd docker
+bash run.sh --with-cuda --model_name="MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric"
+```
+
+Or if you want to run the demo without CUDA support, run the following command:
+
+```bash 
+cd docker
+bash run.sh --model_name="MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric"
+```
+
+By default, `demo.py` is lanched with the option `--local_network`.  
+Visit `http://localhost:7860/` to access the web UI (or replace `localhost` with the machine's name to access it from the network).  
+
+`run.sh` will launch docker-compose using either the [docker-compose-cuda.yml](docker/docker-compose-cuda.yml) or [docker-compose-cpu.ym](docker/docker-compose-cpu.yml) config file, then it starts the demo using [entrypoint.sh](docker/files/entrypoint.sh).
+
+___
 
 ![demo](assets/demo.jpg)
 
