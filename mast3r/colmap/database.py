@@ -19,7 +19,7 @@ from mast3r.utils.misc import hash_md5
 from mast3r.fast_nn import extract_correspondences_nonsym, bruteforce_reciprocal_nns
 
 import mast3r.utils.path_to_dust3r  # noqa
-from dust3r.utils.geometry import find_reciprocal_matches, xy_grid  # noqa
+from dust3r.utils.geometry import find_reciprocal_matches, xy_grid, geotrf  # noqa
 
 
 def convert_im_matches_pairs(img0, img1, image_to_colmap, im_keypoints, matches_im0, matches_im1, viz):
