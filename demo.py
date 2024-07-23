@@ -15,6 +15,9 @@ from mast3r.demo import get_args_parser, main_demo
 from mast3r.model import AsymmetricMASt3R
 from mast3r.utils.misc import hash_md5
 
+import mast3r.utils.path_to_dust3r  # noqa
+from dust3r.demo import set_print_with_timestamp
+
 import matplotlib.pyplot as pl
 pl.ion()
 
@@ -23,6 +26,7 @@ torch.backends.cuda.matmul.allow_tf32 = True  # for gpu >= Ampere and pytorch >=
 if __name__ == '__main__':
     parser = get_args_parser()
     args = parser.parse_args()
+    set_print_with_timestamp()
 
     if args.server_name is not None:
         server_name = args.server_name

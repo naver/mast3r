@@ -13,7 +13,7 @@ import mast3r.utils.path_to_dust3r  # noqa
 from dust3r.model import AsymmetricCroCo3DStereo
 from mast3r.model import AsymmetricMASt3R
 from dust3r.demo import get_args_parser as dust3r_get_args_parser
-from dust3r.demo import main_demo
+from dust3r.demo import main_demo, set_print_with_timestamp
 
 import matplotlib.pyplot as pl
 pl.ion()
@@ -36,6 +36,7 @@ def get_args_parser():
 if __name__ == '__main__':
     parser = get_args_parser()
     args = parser.parse_args()
+    set_print_with_timestamp()
 
     if args.tmp_dir is not None:
         tmp_path = args.tmp_dir
