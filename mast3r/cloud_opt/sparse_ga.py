@@ -14,6 +14,7 @@ import os
 from collections import namedtuple
 from functools import lru_cache
 from scipy import sparse as sp
+import copy
 
 from mast3r.utils.misc import mkdir_for, hash_md5
 from mast3r.cloud_opt.utils.losses import gamma_loss
@@ -166,7 +167,7 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
                            init={}, device='cuda', dtype=torch.float32,
                            matching_conf_thr=5., loss_dust3r_w=0.01,
                            verbose=True, dbg=()):
-
+    init = copy.deepcopy(init)
     # extrinsic parameters
     vec0001 = torch.tensor((0, 0, 0, 1), dtype=dtype, device=device)
     quats = [nn.Parameter(vec0001.clone()) for _ in range(len(imgs))]
