@@ -170,6 +170,7 @@ def get_reconstructed_scene(outdir, gradio_delete_cache, model, device, silent, 
         cache_dir = tempfile.mkdtemp(suffix='_cache', dir=outdir)
     else:
         cache_dir = os.path.join(outdir, 'cache')
+    os.makedirs(cache_dir, exist_ok=True)
     scene = sparse_global_alignment(filelist, pairs, cache_dir,
                                     model, lr1=lr1, niter1=niter1, lr2=lr2, niter2=niter2, device=device,
                                     opt_depth='depth' in optim_level, shared_intrinsics=shared_intrinsics,
