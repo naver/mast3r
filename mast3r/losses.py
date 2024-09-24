@@ -274,12 +274,6 @@ class InfoNCE(MatchingCriterion):
 
 class APLoss (MatchingCriterion):
     """ AP loss.
-
-        Input: (N, M)   values in [min, max]
-        label: (N, M)   values in {0, 1}
-
-        Returns: 1 - mAP (mean AP for each n in {1..N})
-                 Note: typically, this is what you wanna minimize
     """
 
     def __init__(self, nq='torch', min=0, max=1, euc=False, **kw):
