@@ -100,9 +100,8 @@ cd ../../../../
 
 ### Checkpoints
 
-TODO upload retrieval_model somewhere
-
-You can obtain the checkpoints by two ways:
+#### MASt3R Model
+You can obtain the model checkpoints by two ways:
 
 1) You can use our huggingface_hub integration: the models will be downloaded automatically.
 
@@ -124,6 +123,18 @@ wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge
 For these checkpoints, make sure to agree to the license of all the training datasets we used, in addition to CC-BY-NC-SA 4.0. 
 The mapfree dataset license in particular is very restrictive. For more information, check [CHECKPOINTS_NOTICE](CHECKPOINTS_NOTICE).
 
+#### Retrieval Model
+You need to download both the `trainingfree.pth` and `codebook.pkl` files, and put them in the same directory.
+
+For `MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric`:  
+[`MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree`](https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth)  
+[`MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook`](https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl)  
+
+```bash
+mkdir -p checkpoints/
+wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth -P checkpoints/
+wget https://download.europe.naverlabs.com/ComputerVision/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl -P checkpoints/
+```
 
 ### Interactive demo
 
@@ -136,7 +147,7 @@ demo.py is the updated demo for MASt3R. It uses our new sparse global alignment 
 python3 demo.py --model_name MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric
 
 # Use --weights to load a checkpoint from a local file, eg --weights checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth
-# Use --retrieval_model and point to the retrieval checkpoint to enable retrieval as a pairing strategy, asmk must be installed
+# Use --retrieval_model and point to the retrieval checkpoint (*trainingfree.pth) to enable retrieval as a pairing strategy, asmk must be installed
 # Use --local_network to make it accessible on the local network, or --server_name to specify the url manually
 # Use --server_port to change the port, by default it will search for an available port starting at 7860
 # Use --device to use a different device, by default it's "cuda"
