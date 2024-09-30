@@ -273,7 +273,7 @@ class InfoNCE(MatchingCriterion):
 
 
 class APLoss (MatchingCriterion):
-    """ AP loss.
+    """ AP loss
     """
 
     def __init__(self, nq='torch', min=0, max=1, euc=False, **kw):

@@ -78,7 +78,19 @@ pip install -r dust3r/requirements.txt
 pip install -r dust3r/requirements_optional.txt
 ```
 
-3. Optional, compile the cuda kernels for RoPE (as in CroCo v2).
+3. compile and install ASMK
+```bash
+pip install cython
+
+git clone https://github.com/jenicek/asmk
+cd asmk/cython/
+cythonize *.pyx
+cd ..
+pip install .
+cd ..
+```
+
+4. Optional, compile the cuda kernels for RoPE (as in CroCo v2).
 ```bash
 # DUST3R relies on RoPE positional embeddings for which you can compile some cuda kernels for faster runtime.
 cd dust3r/croco/models/curope/
@@ -86,8 +98,9 @@ python setup.py build_ext --inplace
 cd ../../../../
 ```
 
-
 ### Checkpoints
+
+TODO upload retrieval_model somewhere
 
 You can obtain the checkpoints by two ways:
 
@@ -123,6 +136,7 @@ demo.py is the updated demo for MASt3R. It uses our new sparse global alignment 
 python3 demo.py --model_name MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric
 
 # Use --weights to load a checkpoint from a local file, eg --weights checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth
+# Use --retrieval_model and point to the retrieval checkpoint to enable retrieval as a pairing strategy, asmk must be installed
 # Use --local_network to make it accessible on the local network, or --server_name to specify the url manually
 # Use --server_port to change the port, by default it will search for an available port starting at 7860
 # Use --device to use a different device, by default it's "cuda"
@@ -132,6 +146,8 @@ see https://github.com/naver/dust3r?tab=readme-ov-file#interactive-demo for deta
 ```
 
 ### Interactive demo with docker
+
+TODO update with asmk/retrieval model
 
 To run MASt3R using Docker, including with NVIDIA CUDA support, follow these instructions:
 

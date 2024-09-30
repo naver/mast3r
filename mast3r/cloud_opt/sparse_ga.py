@@ -15,6 +15,7 @@ from collections import namedtuple
 from functools import lru_cache
 from scipy import sparse as sp
 import copy
+import scipy.cluster.hierarchy as sch
 
 from mast3r.utils.misc import mkdir_for, hash_md5
 from mast3r.cloud_opt.utils.losses import gamma_loss
@@ -116,7 +117,7 @@ def convert_dust3r_pairs_naming(imgs, pairs_in):
 
 
 def sparse_global_alignment(imgs, pairs_in, cache_path, model, subsample=8, desc_conf='desc_conf',
-                            device='cuda', dtype=torch.float32, shared_intrinsics=False, **kw):
+                            kinematic_mode='hclust-ward', device='cuda', dtype=torch.float32, shared_intrinsics=False, **kw):
     """ Sparse alignment with MASt3R
         imgs: list of image paths
         cache_path: path where to dump temporary files (str)
@@ -137,16 +138,53 @@ def sparse_global_alignment(imgs, pairs_in, cache_path, model, subsample=8, desc
     tmp_pairs, pairwise_scores, canonical_views, canonical_paths, preds_21 = \
         prepare_canonical_data(imgs, pairs, subsample, cache_path=cache_path, mode='avg-angle', device=device)
 
-    # compute minimal spanning tree
-    mst = compute_min_spanning_tree(pairwise_scores)
+    # smartly combine all useful data
+    imsizes, pps, base_focals, core_depth, anchors, corres, corres2d, preds_21 = \
+        condense_data(imgs, tmp_pairs, canonical_views, preds_21, dtype)
+
+    # Build kinematic chain
+    if kinematic_mode == 'mst':
+        # compute minimal spanning tree
+        mst = compute_min_spanning_tree(pairwise_scores)
+
+    elif kinematic_mode.startswith('hclust'):
+        mode, linkage = kinematic_mode.split('-')
+
+        # Convert the affinity matrix to a distance matrix (if needed)
+        n_patches = (imsizes // subsample).prod(dim=1)
+        max_n_corres = 3 * torch.minimum(n_patches[:,None], n_patches[None,:])
+        pws = (pairwise_scores.clone() / max_n_corres).clip(max=1)
+        pws.fill_diagonal_(1)
+        pws = to_numpy(pws)
+        distance_matrix = np.where(pws, 1 - pws, 2)
+
+        # Compute the condensed distance matrix
+        condensed_distance_matrix = sch.distance.squareform(distance_matrix)
+
+        # Perform hierarchical clustering using the linkage method
+        Z = sch.linkage(condensed_distance_matrix, method=linkage)
+        # dendrogram = sch.dendrogram(Z)
+
+        tree = np.eye(len(imgs))
+        new_to_old_nodes = {i:i for i in range(len(imgs))}
+        for i, (a, b) in enumerate(Z[:,:2].astype(int)):
+            # given two nodes to be merged, we choose which one is the best representant
+            a = new_to_old_nodes[a]
+            b = new_to_old_nodes[b]
+            tree[a,b] = tree[b,a] = 1
+            best = a if pws[a].sum() > pws[b].sum() else b
+            new_to_old_nodes[len(imgs)+i] = best
+            pws[best] = np.maximum(pws[a], pws[b]) # update the node
+
+        pairwise_scores = torch.from_numpy(tree) # this output just gives 1s for connected edges and zeros for other, i.e. no scores or priority
+        mst = compute_min_spanning_tree(pairwise_scores)
+
+    else:
+        raise ValueError(f'bad {kinematic_mode=}')
 
     # remove all edges not in the spanning tree?
     # min_spanning_tree = {(imgs[i],imgs[j]) for i,j in mst[1]}
     # tmp_pairs = {(a,b):v for (a,b),v in tmp_pairs.items() if {(a,b),(b,a)} & min_spanning_tree}
-
-    # smartly combine all useful data
-    imsizes, pps, base_focals, core_depth, anchors, corres, corres2d, preds_21 = \
-        condense_data(imgs, tmp_pairs, canonical_views, preds_21, dtype)
 
     imgs, res_coarse, res_fine = sparse_scene_optimizer(
         imgs, subsample, imsizes, pps, base_focals, core_depth, anchors, corres, corres2d, preds_21, canonical_paths, mst,
@@ -157,8 +195,8 @@ def sparse_global_alignment(imgs, pairs_in, cache_path, model, subsample=8, desc
 
 def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_depth, anchors, corres, corres2d,
                            preds_21, canonical_paths, mst, cache_path,
-                           lr1=0.2, niter1=500, loss1=gamma_loss(1.1),
-                           lr2=0.02, niter2=500, loss2=gamma_loss(0.4),
+                           lr1=0.07, niter1=300, loss1=gamma_loss(1.5),
+                           lr2=0.01, niter2=300, loss2=gamma_loss(0.5),
                            lossd=gamma_loss(1.1),
                            opt_pp=True, opt_depth=True,
                            schedule=cosine_schedule, depth_mode='add', exp_depth=False,
