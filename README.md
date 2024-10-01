@@ -86,7 +86,7 @@ git clone https://github.com/jenicek/asmk
 cd asmk/cython/
 cythonize *.pyx
 cd ..
-pip install .
+pip install .  # or python3 setup.py build_ext --inplace
 cd ..
 ```
 
@@ -133,7 +133,7 @@ For `MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric`:
 ```bash
 mkdir -p checkpoints/
 wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth -P checkpoints/
-wget https://download.europe.naverlabs.com/ComputerVision/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl -P checkpoints/
+wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl -P checkpoints/
 ```
 
 ### Interactive demo
