@@ -71,7 +71,8 @@ def main(dir, scene_graph, output, backbone=None, retrieval_model=None):
         torch.cuda.empty_cache()
 
     pairs = make_pairs(imgs, scene_graph, prefilter=None, symmetrize=True, sim_mat=sim_matrix)
-    pairs = sorted(pairs)
+    pairs = [(p1, p2, 1.0) for p1, p2 in pairs]
+    pairs = sorted(set(pairs))
 
     os.umask(0o002)
     p = pathlib.Path(output)
