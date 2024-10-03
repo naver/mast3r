@@ -25,11 +25,13 @@ def get_argparser():
     parser.add_argument('--scene_graph', default='retrieval-20-1-10-1')
     parser.add_argument('--output', required=True, help='txt file')
 
-    parser_weights = parser.add_mutually_exclusive_group(required=False)
+    parser_weights = parser.add_mutually_exclusive_group(required=True)
     parser_weights.add_argument("--weights", type=str, help="path to the model weights", default=None)
     parser_weights.add_argument("--model_name", type=str, help="name of the model weights",
                                 choices=["MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric"])
     parser.add_argument('--retrieval_model', default=None, type=str, help="retrieval_model to be loaded")
+
+    parser.add_argument("--device", type=str, default='cuda', help="pytorch device")
 
     return parser
 
@@ -69,6 +71,7 @@ def main(dir, scene_graph, output, backbone=None, retrieval_model=None):
         torch.cuda.empty_cache()
 
     pairs = make_pairs(imgs, scene_graph, prefilter=None, symmetrize=True, sim_mat=sim_matrix)
+    pairs = sorted(pairs)
 
     os.umask(0o002)
     p = pathlib.Path(output)

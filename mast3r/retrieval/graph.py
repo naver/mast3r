@@ -58,7 +58,7 @@ def make_pairs_fps(sim_mat, Na=20, tokK=1, dist_thresh=None):
         for i in range(keyimg_dist_mat.shape[0]):
             if i in keyimgs_idx:
                 continue
-            j = keyimg_dist_mat[i].argmax()
+            j = keyimg_dist_mat[i].argmin()
             i1, i2 = min(i, keyimgs_idx[j]), max(i, keyimgs_idx[j])
             if i1 != i2 and (i1, i2) not in pairs:
                 pairs.add((i1, i2))
