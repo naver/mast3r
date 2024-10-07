@@ -173,7 +173,7 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
     quats = [nn.Parameter(vec0001.clone()) for _ in range(len(imgs))]
     trans = [nn.Parameter(torch.zeros(3, device=device, dtype=dtype)) for _ in range(len(imgs))]
 
-    # intialize
+    # initialize
     ones = torch.ones((len(imgs), 1), device=device, dtype=dtype)
     median_depths = torch.ones(len(imgs), device=device, dtype=dtype)
     for img in imgs:
