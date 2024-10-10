@@ -153,7 +153,7 @@ cd docker
 bash run.sh --model_name="MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric"
 ```
 
-By default, `demo.py` is lanched with the option `--local_network`.  
+By default, `demo.py` is launched with the option `--local_network`.  
 Visit `http://localhost:7860/` to access the web UI (or replace `localhost` with the machine's name to access it from the network).  
 
 `run.sh` will launch docker-compose using either the [docker-compose-cuda.yml](docker/docker-compose-cuda.yml) or [docker-compose-cpu.ym](docker/docker-compose-cpu.yml) config file, then it starts the demo using [entrypoint.sh](docker/files/entrypoint.sh).
