@@ -342,6 +342,4 @@ python3 visloc.py --model_name MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric 
 
 ```
 
-<p align="right">
-
-  <a href="#top">Back to top ⬆️</a></p>
+<p align="right"><a href="#top">Back to top ⬆️</a></p>
