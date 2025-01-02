@@ -99,8 +99,9 @@ def run_mast3r_matching(model: AsymmetricMASt3R, maxdim: int, patch_size: int, d
         output = inference(pairs_chunk, model, device, batch_size=1, verbose=False)
         pred1, pred2 = output['pred1'], output['pred2']
         # TODO handle caching
-        im_images_chunk = get_im_matches(pred1, pred2, pairs_chunk, image_to_colmap,
-                                         im_keypoints, conf_thr, not dense_matching, pixel_tol)
+        im_images_chunk = get_im_matches(pred1=pred1, pred2=pred2, pairs=pairs_chunk, image_to_colmap=image_to_colmap,
+                                         im_keypoints=im_keypoints, conf_thr=conf_thr, is_sparse=not dense_matching,
+                                         pixel_tol=pixel_tol)
         im_matches.update(im_images_chunk.items())
 
     # filter matches, convert them and export keypoints and matches to colmap db
