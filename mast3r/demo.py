@@ -15,12 +15,14 @@ import copy
 from scipy.spatial.transform import Rotation
 import tempfile
 import shutil
+import torch
 
 from mast3r.cloud_opt.sparse_ga import sparse_global_alignment
 from mast3r.cloud_opt.tsdf_optimizer import TSDFPostProcess
+from mast3r.image_pairs import make_pairs
+from mast3r.retrieval.processor import Retriever
 
 import mast3r.utils.path_to_dust3r  # noqa
-from dust3r.image_pairs import make_pairs
 from dust3r.utils.image import load_images
 from dust3r.utils.device import to_numpy
 from dust3r.viz import add_scene_cam, CAM_COLORS, OPENGL, pts3d_to_trimesh, cat_meshes
@@ -29,7 +31,7 @@ from dust3r.demo import get_args_parser as dust3r_get_args_parser
 import matplotlib.pyplot as pl
 
 
-class SparseGAState():
+class SparseGAState:
     def __init__(self, sparse_ga, should_delete=False, cache_dir=None, outfile_name=None):
         self.sparse_ga = sparse_ga
         self.cache_dir = cache_dir
@@ -52,6 +54,7 @@ def get_args_parser():
     parser.add_argument('--share', action='store_true')
     parser.add_argument('--gradio_delete_cache', default=None, type=int,
                         help='age/frequency at which gradio removes the file. If >0, matching cache is purged')
+    parser.add_argument('--retrieval_model', default=None, type=str, help="retrieval_model to be loaded")
 
     actions = parser._actions
     for action in actions:
@@ -136,10 +139,10 @@ def get_3D_model_from_scene(silent, scene_state, min_conf_thr=2, as_pointcloud=F
                                         transparent_cams=transparent_cams, cam_size=cam_size, silent=silent)
 
 
-def get_reconstructed_scene(outdir, gradio_delete_cache, model, device, silent, image_size, current_scene_state,
-                            filelist, optim_level, lr1, niter1, lr2, niter2, min_conf_thr, matching_conf_thr,
-                            as_pointcloud, mask_sky, clean_depth, transparent_cams, cam_size, scenegraph_type, winsize,
-                            win_cyclic, refid, TSDF_thresh, shared_intrinsics, **kw):
+def get_reconstructed_scene(outdir, gradio_delete_cache, model, retrieval_model, device, silent, image_size,
+                            current_scene_state, filelist, optim_level, lr1, niter1, lr2, niter2, min_conf_thr,
+                            matching_conf_thr, as_pointcloud, mask_sky, clean_depth, transparent_cams, cam_size,
+                            scenegraph_type, winsize, win_cyclic, refid, TSDF_thresh, shared_intrinsics, **kw):
     """
     from a list of images, run mast3r inference, sparse global aligner.
     then run get_3D_model_from_scene
@@ -155,10 +158,26 @@ def get_reconstructed_scene(outdir, gradio_delete_cache, model, device, silent, 
         scene_graph_params.append(str(winsize))
     elif scenegraph_type == "oneref":
         scene_graph_params.append(str(refid))
+    elif scenegraph_type == "retrieval":
+        scene_graph_params.append(str(winsize))  # Na
+        scene_graph_params.append(str(refid))  # k
+
     if scenegraph_type in ["swin", "logwin"] and not win_cyclic:
         scene_graph_params.append('noncyclic')
     scene_graph = '-'.join(scene_graph_params)
-    pairs = make_pairs(imgs, scene_graph=scene_graph, prefilter=None, symmetrize=True)
+
+    sim_matrix = None
+    if 'retrieval' in scenegraph_type:
+        assert retrieval_model is not None
+        retriever = Retriever(retrieval_model, backbone=model, device=device)
+        with torch.no_grad():
+            sim_matrix = retriever(filelist)
+
+        # Cleanup
+        del retriever
+        torch.cuda.empty_cache()
+
+    pairs = make_pairs(imgs, scene_graph=scene_graph, prefilter=None, symmetrize=True, sim_mat=sim_matrix)
     if optim_level == 'coarse':
         niter2 = 0
     # Sparse GA (forward mast3r -> matching -> 3D optim -> 2D refinement -> triangulation)
@@ -190,38 +209,65 @@ def get_reconstructed_scene(outdir, gradio_delete_cache, model, device, silent, 
 
 def set_scenegraph_options(inputfiles, win_cyclic, refid, scenegraph_type):
     num_files = len(inputfiles) if inputfiles is not None else 1
-    show_win_controls = scenegraph_type in ["swin", "logwin"]
-    show_winsize = scenegraph_type in ["swin", "logwin"]
-    show_cyclic = scenegraph_type in ["swin", "logwin"]
     max_winsize, min_winsize = 1, 1
-    if scenegraph_type == "swin":
-        if win_cyclic:
-            max_winsize = max(1, math.ceil((num_files - 1) / 2))
+
+    winsize = gradio.Slider(visible=False)
+    win_cyclic = gradio.Checkbox(visible=False)
+    graph_opt = gradio.Column(visible=False)
+    refid = gradio.Slider(visible=False)
+
+    if scenegraph_type in ["swin", "logwin"]:
+        if scenegraph_type == "swin":
+            if win_cyclic:
+                max_winsize = max(1, math.ceil((num_files - 1) / 2))
+            else:
+                max_winsize = num_files - 1
         else:
-            max_winsize = num_files - 1
-    elif scenegraph_type == "logwin":
-        if win_cyclic:
-            half_size = math.ceil((num_files - 1) / 2)
-            max_winsize = max(1, math.ceil(math.log(half_size, 2)))
-        else:
-            max_winsize = max(1, math.ceil(math.log(num_files, 2)))
-    winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
-                            minimum=min_winsize, maximum=max_winsize, step=1, visible=show_winsize)
-    win_cyclic = gradio.Checkbox(value=win_cyclic, label="Cyclic sequence", visible=show_cyclic)
-    win_col = gradio.Column(visible=show_win_controls)
-    refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
-                          maximum=num_files - 1, step=1, visible=scenegraph_type == 'oneref')
-    return win_col, winsize, win_cyclic, refid
+            if win_cyclic:
+                half_size = math.ceil((num_files - 1) / 2)
+                max_winsize = max(1, math.ceil(math.log(half_size, 2)))
+            else:
+                max_winsize = max(1, math.ceil(math.log(num_files, 2)))
+
+        winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
+                                minimum=min_winsize, maximum=max_winsize, step=1, visible=True)
+        win_cyclic = gradio.Checkbox(value=win_cyclic, label="Cyclic sequence", visible=True)
+        graph_opt = gradio.Column(visible=True)
+        refid = gradio.Slider(visible=False)
+
+    elif scenegraph_type == "retrieval":
+        graph_opt = gradio.Column(visible=True)
+        winsize = gradio.Slider(label="Retrieval: Num. key images", value=min(20, num_files),
+                                minimum=0, maximum=num_files, step=1, visible=True)
+        win_cyclic = gradio.Checkbox(visible=False)
+        refid = gradio.Slider(label="Retrieval: Num neighbors", value=min(num_files - 1, 10), minimum=1,
+                              maximum=num_files - 1, step=1, visible=True)
+
+    elif scenegraph_type == "oneref":
+        graph_opt = gradio.Column(visible=True)
+        winsize = gradio.Slider(visible=False)
+        win_cyclic = gradio.Checkbox(visible=False)
+        refid = gradio.Slider(label="Scene Graph: Id", value=0, minimum=0,
+                              maximum=num_files - 1, step=1, visible=True)
+
+    return graph_opt, winsize, win_cyclic, refid
 
 
-def main_demo(tmpdirname, model, device, image_size, server_name, server_port, silent=False,
+def main_demo(tmpdirname, model, retrieval_model, device, image_size, server_name, server_port, silent=False,
               share=False, gradio_delete_cache=False):
     if not silent:
         print('Outputing stuff in', tmpdirname)
 
-    recon_fun = functools.partial(get_reconstructed_scene, tmpdirname, gradio_delete_cache, model, device,
-                                  silent, image_size)
+    recon_fun = functools.partial(get_reconstructed_scene, tmpdirname, gradio_delete_cache, model,
+                                  retrieval_model, device, silent, image_size)
     model_from_scene_fun = functools.partial(get_3D_model_from_scene, silent)
+
+    available_scenegraph_type = [("complete: all possible image pairs", "complete"),
+                                 ("swin: sliding window", "swin"),
+                                 ("logwin: sliding window with long range", "logwin"),
+                                 ("oneref: match one image with all", "oneref")]
+    if retrieval_model is not None:
+        available_scenegraph_type.insert(1, ("retrieval: connect views based on similarity", "retrieval"))
 
     def get_context(delete_cache):
         css = """.gradio-container {margin: 0 !important; min-width: 100%};"""
@@ -241,33 +287,31 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
                 with gradio.Column():
                     with gradio.Row():
                         lr1 = gradio.Slider(label="Coarse LR", value=0.07, minimum=0.01, maximum=0.2, step=0.01)
-                        niter1 = gradio.Number(value=500, precision=0, minimum=0, maximum=10_000,
-                                               label="num_iterations", info="For coarse alignment!")
-                        lr2 = gradio.Slider(label="Fine LR", value=0.014, minimum=0.005, maximum=0.05, step=0.001)
-                        niter2 = gradio.Number(value=200, precision=0, minimum=0, maximum=100_000,
-                                               label="num_iterations", info="For refinement!")
+                        niter1 = gradio.Slider(value=300, minimum=0, maximum=1000, step=1,
+                                               label="Iterations", info="For coarse alignment")
+                        lr2 = gradio.Slider(label="Fine LR", value=0.01, minimum=0.005, maximum=0.05, step=0.001)
+                        niter2 = gradio.Slider(value=300, minimum=0, maximum=1000, step=1,
+                                               label="Iterations", info="For refinement")
                         optim_level = gradio.Dropdown(["coarse", "refine", "refine+depth"],
                                                       value='refine+depth', label="OptLevel",
                                                       info="Optimization level")
                     with gradio.Row():
-                        matching_conf_thr = gradio.Slider(label="Matching Confidence Thr", value=5.,
+                        matching_conf_thr = gradio.Slider(label="Matching Confidence Thr", value=0.,
                                                           minimum=0., maximum=30., step=0.1,
                                                           info="Before Fallback to Regr3D!")
                         shared_intrinsics = gradio.Checkbox(value=False, label="Shared intrinsics",
                                                             info="Only optimize one set of intrinsics for all views")
-                        scenegraph_type = gradio.Dropdown([("complete: all possible image pairs", "complete"),
-                                                           ("swin: sliding window", "swin"),
-                                                           ("logwin: sliding window with long range", "logwin"),
-                                                           ("oneref: match one image with all", "oneref")],
+                        scenegraph_type = gradio.Dropdown(available_scenegraph_type,
                                                           value='complete', label="Scenegraph",
                                                           info="Define how to make pairs",
                                                           interactive=True)
-                        with gradio.Column(visible=False) as win_col:
+                        with gradio.Column(visible=False) as graph_opt:
                             winsize = gradio.Slider(label="Scene Graph: Window Size", value=1,
                                                     minimum=1, maximum=1, step=1)
                             win_cyclic = gradio.Checkbox(value=False, label="Cyclic sequence")
-                        refid = gradio.Slider(label="Scene Graph: Id", value=0,
-                                              minimum=0, maximum=0, step=1, visible=False)
+                            refid = gradio.Slider(label="Scene Graph: Id", value=0,
+                                                  minimum=0, maximum=0, step=1, visible=False)
+
             run_btn = gradio.Button("Run")
 
             with gradio.Row():
@@ -288,13 +332,13 @@ def main_demo(tmpdirname, model, device, image_size, server_name, server_port, s
             # events
             scenegraph_type.change(set_scenegraph_options,
                                    inputs=[inputfiles, win_cyclic, refid, scenegraph_type],
-                                   outputs=[win_col, winsize, win_cyclic, refid])
+                                   outputs=[graph_opt, winsize, win_cyclic, refid])
             inputfiles.change(set_scenegraph_options,
                               inputs=[inputfiles, win_cyclic, refid, scenegraph_type],
-                              outputs=[win_col, winsize, win_cyclic, refid])
+                              outputs=[graph_opt, winsize, win_cyclic, refid])
             win_cyclic.change(set_scenegraph_options,
                               inputs=[inputfiles, win_cyclic, refid, scenegraph_type],
-                              outputs=[win_col, winsize, win_cyclic, refid])
+                              outputs=[graph_opt, winsize, win_cyclic, refid])
             run_btn.click(fn=recon_fun,
                           inputs=[scene, inputfiles, optim_level, lr1, niter1, lr2, niter2, min_conf_thr, matching_conf_thr,
                                   as_pointcloud, mask_sky, clean_depth, transparent_cams, cam_size,

@@ -5,6 +5,7 @@
 # MASt3R heads
 # --------------------------------------------------------
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 import mast3r.utils.path_to_dust3r  # noqa
@@ -12,6 +13,7 @@ from dust3r.heads.postprocess import reg_dense_depth, reg_dense_conf  # noqa
 from dust3r.heads.dpt_head import PixelwiseTaskWithDPT  # noqa
 import dust3r.utils.path_to_croco  # noqa
 from models.blocks import Mlp  # noqa
+from models.dpt_block import Interpolate  # noqa
 
 
 def reg_desc(desc, mode):
@@ -96,6 +98,113 @@ class Cat_MLP_LocalFeatures_DPT_Pts3d(PixelwiseTaskWithDPT):
         return out
 
 
+class MLP_MiniConv_Head(nn.Module):
+    """
+    A special Convolutional head inspired by DPT architecture
+    A MLP predicts pixelwise feats in lower resolution. Prediction is upsampled to target res and goes through a mini convolutional head
+
+    Input : [B, S, D]  # S = (H//p) * (W//p)
+
+    MLP: 
+        D -> (mlp_hidden_dim) -> out_mlp_dim * (p/2)*2 
+        reshape to [out_mlp_dim, H/2, W/2] (MLP predicts in half-res)
+
+    MiniConv head from DPT: 
+        Upsample x2 -> [out_mlp_dim,H,W]
+        Conv 3x3 -> [conv_inner_dim,H,W]
+        ReLU
+        Conv 1x1 -> [odim,H,W]
+
+    """
+
+    def __init__(self, idim, mlp_hidden_dim, mlp_odim, conv_inner_dim, odim, patch_size, subpatch=2, **kw):
+        super().__init__()
+        self.patch_size = patch_size
+        self.subpatch = subpatch
+        self.sub_patch_size = patch_size // subpatch
+        self.mlp = Mlp(idim, mlp_hidden_dim, mlp_odim * self.sub_patch_size**2, **kw)  # D -> mlp_odim*sub_patch_size**2
+
+        # DPT conv head
+        self.head = nn.Sequential(Interpolate(scale_factor=self.subpatch, mode="bilinear", align_corners=True) if self.subpatch != 1 else nn.Identity(),
+                                  nn.Conv2d(mlp_odim, conv_inner_dim, kernel_size=3, stride=1, padding=1),
+                                  nn.ReLU(True),
+                                  nn.Conv2d(conv_inner_dim, odim, kernel_size=1, stride=1, padding=0)
+                                  )
+
+    def forward(self, decout, img_shape):
+        H, W = img_shape
+        tokens = decout[-1]
+        B, S, D = tokens.shape
+        # extract features
+        feat = self.mlp(tokens)  # [B, S, mlp_odim*sub_patch_size**2]
+        feat = feat.transpose(-1, -2).reshape(B, -1, H // self.patch_size, W // self.patch_size)
+        feat = F.pixel_shuffle(feat, self.sub_patch_size)  # B,mlp_odim,H/sub,W/sub
+
+        return self.head(feat)  # B, odim, H, W
+
+
+class Cat_MLP_LocalFeatures_MiniConv_Pts3d(nn.Module):
+    """ Mixture between MLP and MLP-Convolutional head that outputs 3d points (with miniconv) and local features (with MLP).
+    simply contains two MLP_MiniConv_Head: one for 3D points and one for features.
+    The input for both heads is a concatenation of Encoder and Decoder outputs
+    """
+
+    def __init__(self, net, has_conf=False, local_feat_dim=16, hidden_dim_factor=4., mlp_odim=24, conv_inner_dim=100, subpatch=2, **kw):
+        super().__init__()
+
+        self.local_feat_dim = local_feat_dim
+        patch_size = net.patch_embed.patch_size
+        if isinstance(patch_size, tuple):
+            assert len(patch_size) == 2 and isinstance(patch_size[0], int) and isinstance(
+                patch_size[1], int), "What is your patchsize format? Expected a single int or a tuple of two ints."
+            assert patch_size[0] == patch_size[1], "Error, non square patches not managed"
+            patch_size = patch_size[0]
+        self.patch_size = patch_size
+
+        self.depth_mode = net.depth_mode
+        self.conf_mode = net.conf_mode
+        self.desc_mode = net.desc_mode
+        self.desc_conf_mode = net.desc_conf_mode
+        self.has_conf = has_conf
+        self.two_confs = net.two_confs  # independent confs for 3D regr and descs
+        idim = net.enc_embed_dim + net.dec_embed_dim
+        self.head_pts3d = MLP_MiniConv_Head(idim=idim,
+                                            mlp_hidden_dim=int(hidden_dim_factor * idim),
+                                            mlp_odim=mlp_odim + self.has_conf,
+                                            conv_inner_dim=conv_inner_dim,
+                                            odim=3 + self.has_conf,
+                                            subpatch=subpatch,
+                                            patch_size=self.patch_size,
+                                            **kw)
+
+        self.head_local_features = Mlp(in_features=idim,
+                                       hidden_features=int(hidden_dim_factor * idim),
+                                       out_features=(self.local_feat_dim + self.two_confs) * self.patch_size**2)
+
+    def forward(self, decout, img_shape):
+        enc_output, dec_output = decout[0], decout[-1]  # recover encoder and decoder outputs
+        cat_output = torch.cat([enc_output, dec_output], dim=-1)  # concatenate
+        # pass through the heads
+        pts3d = self.head_pts3d([cat_output], img_shape)
+
+        H, W = img_shape
+        B, S, D = cat_output.shape
+
+        # extract 3D points
+        local_features = self.head_local_features(cat_output)  # B,S,D
+        local_features = local_features.transpose(-1, -2).view(B, -1, H // self.patch_size, W // self.patch_size)
+        local_features = F.pixel_shuffle(local_features, self.patch_size)  # B,d,H,W
+
+        # post process 3D pts, descriptors and confidences
+        out = postprocess(torch.cat([pts3d, local_features], dim=1),
+                          depth_mode=self.depth_mode,
+                          conf_mode=self.conf_mode,
+                          desc_dim=self.local_feat_dim,
+                          desc_mode=self.desc_mode,
+                          two_confs=self.two_confs, desc_conf_mode=self.desc_conf_mode)
+        return out
+
+
 def mast3r_head_factory(head_type, output_mode, net, has_conf=False):
     """" build a prediction head for the decoder 
     """
@@ -118,6 +227,13 @@ def mast3r_head_factory(head_type, output_mode, net, has_conf=False):
                                                depth_mode=net.depth_mode,
                                                conf_mode=net.conf_mode,
                                                head_type='regression')
+    elif head_type == 'catconv' and output_mode.startswith('pts3d+desc'):
+        local_feat_dim = int(output_mode[10:])
+        # more params (anounced by a ':' and comma separated)
+        kw = {}
+        if ':' in head_type:
+            kw = eval("dict(" + head_type[8:] + ")")
+        return Cat_MLP_LocalFeatures_MiniConv_Pts3d(net, local_feat_dim=local_feat_dim, has_conf=has_conf, **kw)
     else:
         raise NotImplementedError(
             f"unexpected {head_type=} and {output_mode=}")
