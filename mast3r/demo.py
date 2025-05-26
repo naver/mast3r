@@ -219,12 +219,12 @@ def set_scenegraph_options(inputfiles, win_cyclic, refid, scenegraph_type):
 
     if scenegraph_type in ["swin", "logwin"]:
         if scenegraph_type == "swin":
-            if win_cyclic:
+            if win_cyclic_old_val:
                 max_winsize = max(1, math.ceil((num_files - 1) / 2))
             else:
                 max_winsize = num_files - 1
         else:
-            if win_cyclic:
+            if win_cyclic_old_val:
                 half_size = math.ceil((num_files - 1) / 2)
                 max_winsize = max(1, math.ceil(math.log(half_size, 2)))
             else:
