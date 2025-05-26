@@ -210,6 +210,7 @@ def get_reconstructed_scene(outdir, gradio_delete_cache, model, retrieval_model,
 def set_scenegraph_options(inputfiles, win_cyclic, refid, scenegraph_type):
     num_files = len(inputfiles) if inputfiles is not None else 1
     max_winsize, min_winsize = 1, 1
+    win_cyclic_old_val = win_cyclic
 
     winsize = gradio.Slider(visible=False)
     win_cyclic = gradio.Checkbox(visible=False)
@@ -231,7 +232,7 @@ def set_scenegraph_options(inputfiles, win_cyclic, refid, scenegraph_type):
 
         winsize = gradio.Slider(label="Scene Graph: Window Size", value=max_winsize,
                                 minimum=min_winsize, maximum=max_winsize, step=1, visible=True)
-        win_cyclic = gradio.Checkbox(value=win_cyclic, label="Cyclic sequence", visible=True)
+        win_cyclic = gradio.Checkbox(value=win_cyclic_old_val, label="Cyclic sequence", visible=True)
         graph_opt = gradio.Column(visible=True)
         refid = gradio.Slider(visible=False)
 
