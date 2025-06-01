@@ -112,7 +112,7 @@ You can obtain the model checkpoints by two ways:
 | [`MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric`](https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth) | 512x384, 512x336, 512x288, 512x256, 512x160 | CatMLP+DPT | ViT-L | ViT-B |
 
 You can check the hyperparameters we used to train these models in the [section: Our Hyperparameters](#our-hyperparameters)
-Make sure to check license of the datasets we used. 
+Make sure to check the license of the datasets we used. 
 
 To download a specific model, for example `MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth`:
 ```bash
@@ -276,7 +276,7 @@ See [Datasets section in DUSt3R](https://github.com/naver/dust3r?tab=readme-ov-f
 
 ### Demo
 
-Like for the DUSt3R training demo, we're going to download and prepare the same subset of [CO3Dv2](https://github.com/facebookresearch/co3d) - [Creative Commons Attribution-NonCommercial 4.0 International](https://github.com/facebookresearch/co3d/blob/main/LICENSE) and launch the training code on it.
+As for the DUSt3R training demo, we're going to download and prepare the same subset of [CO3Dv2](https://github.com/facebookresearch/co3d) - [Creative Commons Attribution-NonCommercial 4.0 International](https://github.com/facebookresearch/co3d/blob/main/LICENSE) and launch the training code on it.
 It is the exact same process as DUSt3R.
 The demo model will be trained for a few epochs on a very small dataset.
 It will not be very good.
