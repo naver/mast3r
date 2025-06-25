@@ -23,7 +23,11 @@ from kapture.converter.colmap.database import COLMAPDatabase
 
 from mast3r.colmap.mapping import kapture_import_image_folder_or_list, run_mast3r_matching, glomap_run_mapper
 from mast3r.demo import set_scenegraph_options
-from mast3r.retrieval.processor import Retriever
+try:
+    from mast3r.retrieval.processor import Retriever
+    has_retrieval = True
+except Exception as e:
+    has_retrieval = False
 from mast3r.image_pairs import make_pairs
 
 import mast3r.utils.path_to_dust3r  # noqa
@@ -105,6 +109,7 @@ def get_reconstructed_scene(glomap_bin, outdir, gradio_delete_cache, model, retr
 
     sim_matrix = None
     if 'retrieval' in scenegraph_type:
+        assert has_retrieval
         assert retrieval_model is not None
         retriever = Retriever(retrieval_model, backbone=model, device=device)
         with torch.no_grad():

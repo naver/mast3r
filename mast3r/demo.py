@@ -20,7 +20,11 @@ import torch
 from mast3r.cloud_opt.sparse_ga import sparse_global_alignment
 from mast3r.cloud_opt.tsdf_optimizer import TSDFPostProcess
 from mast3r.image_pairs import make_pairs
-from mast3r.retrieval.processor import Retriever
+try:
+    from mast3r.retrieval.processor import Retriever
+    has_retrieval = True
+except Exception as e:
+    has_retrieval = False
 
 import mast3r.utils.path_to_dust3r  # noqa
 from dust3r.utils.image import load_images
@@ -168,6 +172,7 @@ def get_reconstructed_scene(outdir, gradio_delete_cache, model, retrieval_model,
 
     sim_matrix = None
     if 'retrieval' in scenegraph_type:
+        assert has_retrieval
         assert retrieval_model is not None
         retriever = Retriever(retrieval_model, backbone=model, device=device)
         with torch.no_grad():

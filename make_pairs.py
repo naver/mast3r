@@ -15,8 +15,12 @@ import pathlib
 from kapture.io.csv import table_to_file
 
 from mast3r.model import AsymmetricMASt3R
-from mast3r.retrieval.processor import Retriever
-from mast3r.image_pairs import make_pairs
+try:
+    from mast3r.retrieval.processor import Retriever
+    has_retrieval = True
+except Exception as e:
+    has_retrieval = False
+from mast3r.image_pairs import make_pairs  # noqa
 
 
 def get_argparser():
@@ -61,6 +65,7 @@ def main(dir, scene_graph, output, backbone=None, retrieval_model=None):
 
     sim_matrix = None
     if 'retrieval' in scene_graph:
+        assert has_retrieval
         retriever = Retriever(retrieval_model, backbone=backbone)
         imgs_fp = [path.join(dir, filename) for filename in imgs]
         with torch.no_grad():
