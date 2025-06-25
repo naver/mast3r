@@ -8,6 +8,13 @@ Official implementation of `Grounding Image Matching in 3D with MASt3R`
 ![High level overview of MASt3R's architecture](assets/mast3r_archi.jpg)
 
 ```bibtex
+@misc{mast3r_eccv24,
+      title={Grounding Image Matching in 3D with MASt3R}, 
+      author={Vincent Leroy and Yohann Cabon and Jerome Revaud},
+      booktitle = {ECCV},
+      year = {2024}
+}
+
 @misc{mast3r_arxiv24,
       title={Grounding Image Matching in 3D with MASt3R}, 
       author={Vincent Leroy and Yohann Cabon and Jerome Revaud},
@@ -23,6 +30,15 @@ Official implementation of `Grounding Image Matching in 3D with MASt3R`
       booktitle = {CVPR},
       year = {2024}
 }
+
+@inproceedings{
+    duisterhof2025mastrsfm,
+    title={{MAS}t3R-SfM: a Fully-Integrated Solution for Unconstrained Structure-from-Motion},
+    author={Bardienus Pieter Duisterhof and Lojze Zust and Philippe Weinzaepfel and Vincent Leroy and Yohann Cabon and Jerome Revaud},
+    booktitle={International Conference on 3D Vision 2025},
+    year={2025},
+    url={https://openreview.net/forum?id=5uw1GRBFoT}
+} 
 ```
 
 ## Table of Contents
@@ -32,6 +48,7 @@ Official implementation of `Grounding Image Matching in 3D with MASt3R`
 - [Get Started](#get-started)
   - [Installation](#installation)
   - [Checkpoints](#checkpoints)
+  - [MASt3R-SfM](#mast3r-sfm)
   - [Interactive demo](#interactive-demo)
   - [Interactive demo with docker](#interactive-demo-with-docker)
 - [Usage](#usage)
@@ -135,6 +152,14 @@ mkdir -p checkpoints/
 wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth -P checkpoints/
 wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl -P checkpoints/
 ```
+
+### MASt3R-SfM
+
+A few words about the addition of MASt3R-SfM to this repository. 
+
+MASt3R-SfM refers to the make_pairs (retrieval) + sparse_global_alignment that you can find here: [demo.py#L142](mast3r/demo.py#L142). 
+
+In this repository, you will also find `kapture_mast3r_mapping.py` and `demo_glomap.py`. These two scripts are unrelated to MASt3R-SfM. They are "toys" that attempt to use mast3r matches to do standard Sfm reconstructions with colmap/glomap. As such, they were not extensively tested, and may fail on edge cases.
 
 ### Interactive demo
 
