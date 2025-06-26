@@ -168,7 +168,7 @@ You can find the MASt3R decoder that goes with it here:
 
 ```bash
 mkdir -p checkpoints/
-wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/DUNE/dunemast3r_cvpr25_vitbase.pth -P checkpoints/
+wget https://download.europe.naverlabs.com/dune/dunemast3r_cvpr25_vitbase.pth -P checkpoints/
 ```
 
 This model have limited compatility with the rest of the codebase, but we wanted to include it as it achieves impressive results on the Map-free Visual Relocalization benchmark.
