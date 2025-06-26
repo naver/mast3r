@@ -48,16 +48,21 @@ Official implementation of `Grounding Image Matching in 3D with MASt3R`
 - [Get Started](#get-started)
   - [Installation](#installation)
   - [Checkpoints](#checkpoints)
+    - [MASt3R Model](#mast3r-model)
+    - [Retrieval Model](#retrieval-model)
+    - [Dune Model](#dune-model)
   - [MASt3R-SfM](#mast3r-sfm)
   - [Interactive demo](#interactive-demo)
   - [Interactive demo with docker](#interactive-demo-with-docker)
 - [Usage](#usage)
+  - [Usage MASt3R](#usage-mast3r)
+  - [Usage DUNE+MASt3R](#usage-dunemast3r)
 - [Training](#training)
   - [Datasets](#datasets)
   - [Demo](#demo)
   - [Our Hyperparameters](#our-hyperparameters)
 - [Visual Localization](#visual-localization)
-  - [Dataset Preparation](#dataset-preparation)
+  - [Dataset preparation](#dataset-preparation)
   - [Example Commands](#example-commands)
 
 ## License
@@ -122,7 +127,7 @@ You can obtain the model checkpoints by two ways:
 
 1) You can use our huggingface_hub integration: the models will be downloaded automatically.
 
-2) Otherwise, We provide several pre-trained models:
+2) Otherwise, download it from our server:
 
 | Modelname   | Training resolutions | Head | Encoder | Decoder |
 |-------------|----------------------|------|---------|---------|
@@ -131,19 +136,19 @@ You can obtain the model checkpoints by two ways:
 You can check the hyperparameters we used to train these models in the [section: Our Hyperparameters](#our-hyperparameters)
 Make sure to check license of the datasets we used. 
 
-To download a specific model, for example `MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth`:
+To download `MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth`:
 ```bash
 mkdir -p checkpoints/
 wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth -P checkpoints/
 ```
 
-For these checkpoints, make sure to agree to the license of all the training datasets we used, in addition to CC-BY-NC-SA 4.0. 
+Make sure to agree to the license of all the training datasets we used, in addition to CC-BY-NC-SA 4.0. 
 The mapfree dataset license in particular is very restrictive. For more information, check [CHECKPOINTS_NOTICE](CHECKPOINTS_NOTICE).
 
 #### Retrieval Model
+This retrieval model is for `MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric` only.
 You need to download both the `trainingfree.pth` and `codebook.pkl` files, and put them in the same directory.
 
-For `MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric`:  
 [`MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree`](https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth)  
 [`MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook`](https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl)  
 
@@ -152,6 +157,22 @@ mkdir -p checkpoints/
 wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth -P checkpoints/
 wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_codebook.pkl -P checkpoints/
 ```
+
+#### Dune Model
+
+We added partial support of the [Dune](https://github.com/naver/dune) encoder. Check the associated [Dune License](https://github.com/naver/dune/blob/main/Project%20NLE%20DUNE%20LICENSE.txt).  
+You can find the MASt3R decoder that goes with it here:
+
+[`dunemast3r_cvpr25_vitbase`](https://download.europe.naverlabs.com/dune/dunemast3r_cvpr25_vitbase.pth)  
+[`dunemast3r_cvpr25_vitsmall`](https://download.europe.naverlabs.com/dune/dunemast3r_cvpr25_vitsmall.pth)  
+
+```bash
+mkdir -p checkpoints/
+wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/DUNE/dunemast3r_cvpr25_vitbase.pth -P checkpoints/
+```
+
+This model have limited compatility with the rest of the codebase, but we wanted to include it as it achieves impressive results on the Map-free Visual Relocalization benchmark.
+Make sure to check the [Usage DUNE+MASt3R](#usage-dune-mast3r) section if you are interested.
 
 ### MASt3R-SfM
 
@@ -215,6 +236,12 @@ ___
 ![demo](assets/demo.jpg)
 
 ## Usage
+### Usage MASt3R
+
+<details>
+<summary>
+Code sample to compute matches with MASt3R for a pair of images
+</summary>
 
 ```python
 from mast3r.model import AsymmetricMASt3R
@@ -226,10 +253,6 @@ from dust3r.utils.image import load_images
 
 if __name__ == '__main__':
     device = 'cuda'
-    schedule = 'cosine'
-    lr = 0.01
-    niter = 300
-
     model_name = "naver/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric"
     # you can put the path to a local checkpoint in model_name if needed
     model = AsymmetricMASt3R.from_pretrained(model_name).to(device)
@@ -289,7 +312,97 @@ if __name__ == '__main__':
         pl.plot([x0, x1 + W0], [y0, y1], '-+', color=cmap(i / (n_viz - 1)), scalex=False, scaley=False)
     pl.show(block=True)
 ```
+
+</details>
+
 ![matching example on croco pair](assets/matching.jpg)
+
+### Usage DUNE+MASt3R
+
+At the moment, you can only do two things:
+
+1) Extract matches, following the subset of code below
+2) Run the `demo_dust3r_ga.py` script with option `--weights checkpoints/dunemast3r_cvpr25_vitbase.pth --image_size 518`
+
+<details>
+<summary>
+Code sample to compute matches with DUNE+MASt3R for a pair of images
+</summary>
+
+```python
+from mast3r.model import load_dune_mast3r_model
+from mast3r.fast_nn import fast_reciprocal_NNs
+
+import mast3r.utils.path_to_dust3r  # noqa
+from dust3r.utils.image import load_images
+from dust3r.inference import inference
+
+import torch
+
+if __name__ == '__main__':
+    device = torch.device('cuda:0')
+    model = load_dune_mast3r_model('checkpoints/dunemast3r_cvpr25_vitbase.pth', device)
+
+    images = load_images(['dust3r/croco/assets/Chateau1.png', 'dust3r/croco/assets/Chateau2.png'],
+                        size=518, patch_size=model.patch_size, square_ok=True)
+
+    output = inference([tuple(images)], model, device, batch_size=1, verbose=False)
+
+    # at this stage, you have the raw dust3r predictions
+    view1, pred1 = output['view1'], output['pred1']
+    view2, pred2 = output['view2'], output['pred2']
+
+    desc1, desc2 = pred1['desc'].squeeze(0).detach(), pred2['desc'].squeeze(0).detach()
+
+    # find 2D-2D matches between the two images
+    matches_im0, matches_im1 = fast_reciprocal_NNs(desc1, desc2, subsample_or_initxy1=8,
+                                                device=device, dist='dot', block_size=2**13)
+
+    # ignore small border around the edge
+    H0, W0 = view1['true_shape'][0]
+    valid_matches_im0 = (matches_im0[:, 0] >= 3) & (matches_im0[:, 0] < int(W0) - 3) & (
+        matches_im0[:, 1] >= 3) & (matches_im0[:, 1] < int(H0) - 3)
+
+    H1, W1 = view2['true_shape'][0]
+    valid_matches_im1 = (matches_im1[:, 0] >= 3) & (matches_im1[:, 0] < int(W1) - 3) & (
+        matches_im1[:, 1] >= 3) & (matches_im1[:, 1] < int(H1) - 3)
+
+    valid_matches = valid_matches_im0 & valid_matches_im1
+    matches_im0, matches_im1 = matches_im0[valid_matches], matches_im1[valid_matches]
+
+    # visualize a few matches
+    import numpy as np
+    import torch
+    import torchvision.transforms.functional
+    from matplotlib import pyplot as pl
+
+    n_viz = 20
+    num_matches = matches_im0.shape[0]
+    match_idx_to_viz = np.round(np.linspace(0, num_matches - 1, n_viz)).astype(int)
+    viz_matches_im0, viz_matches_im1 = matches_im0[match_idx_to_viz], matches_im1[match_idx_to_viz]
+
+    image_mean = torch.as_tensor([0.5, 0.5, 0.5], device='cpu').reshape(1, 3, 1, 1)
+    image_std = torch.as_tensor([0.5, 0.5, 0.5], device='cpu').reshape(1, 3, 1, 1)
+
+    viz_imgs = []
+    for i, view in enumerate([view1, view2]):
+        rgb_tensor = view['img'] * image_std + image_mean
+        viz_imgs.append(rgb_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy())
+
+    H0, W0, H1, W1 = *viz_imgs[0].shape[:2], *viz_imgs[1].shape[:2]
+    img0 = np.pad(viz_imgs[0], ((0, max(H1 - H0, 0)), (0, 0), (0, 0)), 'constant', constant_values=0)
+    img1 = np.pad(viz_imgs[1], ((0, max(H0 - H1, 0)), (0, 0), (0, 0)), 'constant', constant_values=0)
+    img = np.concatenate((img0, img1), axis=1)
+    pl.figure()
+    pl.imshow(img)
+    cmap = pl.get_cmap('jet')
+    for i in range(n_viz):
+        (x0, y0), (x1, y1) = viz_matches_im0[i].T, viz_matches_im1[i].T
+        pl.plot([x0, x1 + W0], [y0, y1], '-+', color=cmap(i / (n_viz - 1)), scalex=False, scaley=False)
+    pl.show(block=True)
+
+```
+</details>
 
 ## Training
 

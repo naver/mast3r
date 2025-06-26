@@ -12,6 +12,7 @@ import tempfile
 import mast3r.utils.path_to_dust3r  # noqa
 from dust3r.model import AsymmetricCroCo3DStereo
 from mast3r.model import AsymmetricMASt3R
+from mast3r.model import load_dune_mast3r_model
 from dust3r.demo import get_args_parser as dust3r_get_args_parser
 from dust3r.demo import main_demo, set_print_with_timestamp
 
@@ -28,6 +29,8 @@ def get_args_parser():
     for action in actions:
         if action.dest == 'model_name':
             action.choices.append('MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric')
+        if action.dest == 'image_size':
+            action.choices.append(518)
     # change defaults
     parser.prog = 'mast3r demo'
     return parser
@@ -53,10 +56,41 @@ if __name__ == '__main__':
     else:
         weights_path = "naver/" + args.model_name
 
+    model = None
     try:
+        if not args.silent:
+            print(f'attempting to load {weights_path} as a AsymmetricMASt3R')
         model = AsymmetricMASt3R.from_pretrained(weights_path).to(args.device)
+        if not args.silent:
+            print(f'... Success.')
     except Exception as e:
-        model = AsymmetricCroCo3DStereo.from_pretrained(weights_path).to(args.device)
+        if not args.silent:
+            print(f'... Failed.')
+
+    if model is None:
+        try:
+            if not args.silent:
+                print(f'attempting to load {weights_path} as a AsymmetricCroCo3DStereo')
+            model = AsymmetricCroCo3DStereo.from_pretrained(weights_path).to(args.device)
+            if not args.silent:
+                print(f'... Success.')
+        except Exception as e:
+            if not args.silent:
+                print(f'... Failed.')
+
+    if model is None:
+        try:
+            if not args.silent:
+                print(f'attempting to load {weights_path} as a AsymmetricMASt3RWithDUNEBackbone')
+            model = load_dune_mast3r_model(weights_path, args.device)
+            if not args.silent:
+                print(f'... Success.')
+        except Exception as e:
+            if not args.silent:
+                print(f'... Failed.')
+
+    if model is None:
+        raise Exception(f"Could not load {weights_path}.")
 
     # dust3r will write the 3D model inside tmpdirname
     with tempfile.TemporaryDirectory(suffix='dust3r_gradio_demo') as tmpdirname:
