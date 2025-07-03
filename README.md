@@ -1,11 +1,21 @@
 ![banner](assets/mast3r.jpg)
 
 Official implementation of `Grounding Image Matching in 3D with MASt3R`  
-[[Project page](https://europe.naverlabs.com/blog/mast3r-matching-and-stereo-3d-reconstruction/)], [[MASt3R arxiv](https://arxiv.org/abs/2406.09756)], [[DUSt3R arxiv](https://arxiv.org/abs/2312.14132)]  
+[[Project page](https://europe.naverlabs.com/blog/mast3r-matching-and-stereo-3d-reconstruction/)], [[MASt3R arxiv](https://arxiv.org/abs/2406.09756)], [[DUSt3R arxiv](https://arxiv.org/abs/2312.14132)] 
+
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![GitHub release](https://img.shields.io/github/release/Naereen/StrapDown.js.svg)](https://GitHub.com/naver/mast3r/releases/)
+[![GitHub forks](https://img.shields.io/github/forks/Naereen/StrapDown.js.svg?style=social&label=Fork&maxAge=2592000)](https://GitHub.com/naver/mast3r/network/)
+[![GitHub stars](https://img.shields.io/github/stars/Naereen/StrapDown.js.svg?style=social&label=Star&maxAge=2592000)](https://GitHub.com/naver/mast3r/stargazers/)
+[![made-with-python](https://img.shields.io/badge/Made%20with-Python-1f425f.svg)](https://www.python.org/)
+
 
 ![Example of matching results obtained from MASt3R](assets/examples.jpg)
 
 ![High level overview of MASt3R's architecture](assets/mast3r_archi.jpg)
+
+
+
 
 ```bibtex
 @misc{mast3r_eccv24,
@@ -40,6 +50,7 @@ Official implementation of `Grounding Image Matching in 3D with MASt3R`
     url={https://openreview.net/forum?id=5uw1GRBFoT}
 } 
 ```
+
 
 ## Table of Contents
 
