@@ -931,7 +931,12 @@ def spectral_clustering(graph, k=None, normalized_cuts=False):
     degrees = graph.sum(dim=-1)
     laplacian = torch.diag(degrees) - graph
     if normalized_cuts:
-        i_inv = torch.diag(degrees.sqrt().reciprocal())
+        # The generalized inverse is zero at isolated vertices. Avoid dividing
+        # by zero without clamping positive, potentially subnormal degrees.
+        nonzero = degrees > 0
+        safe_degrees = torch.where(nonzero, degrees, torch.ones_like(degrees))
+        inverse_degree = torch.where(nonzero, safe_degrees.rsqrt(), torch.zeros_like(degrees))
+        i_inv = torch.diag(inverse_degree)
         laplacian = i_inv @ laplacian @ i_inv
 
     # compute eigenvectors!
