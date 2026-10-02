@@ -19,9 +19,11 @@ from dust3r.utils.geometry import get_joint_pointcloud_depth, get_joint_pointclo
 
 def apply_log_to_norm(xyz):
     d = xyz.norm(dim=-1, keepdim=True)
-    xyz = xyz / d.clip(min=1e-8)
-    xyz = xyz * torch.log1p(d)
-    return xyz
+    # log1p(d) / d has the removable limit 1 at the origin.
+    nonzero = d > 0
+    safe_d = torch.where(nonzero, d, torch.ones_like(d))
+    scale = torch.where(nonzero, torch.log1p(d) / safe_d, torch.ones_like(d))
+    return xyz * scale
 
 
 class Regr3D (Regr3D_dust3r):
